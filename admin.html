@@ -240,12 +240,12 @@
      </div>
     </div>
     <div class="panel">
-     <div class="panel-title">報到名單 CSV 安全匯入</div>
-     <p class="msg">先預覽並驗證資料，確認後才會覆寫目前場次。建議匯入前先在「戰情儀表板」下載現有名單備份。</p>
+     <div class="panel-title">報到名單安全匯入（CSV / XLSX）</div>
+     <p class="msg">支援 CSV 與 Excel .xlsx（不支援舊版 .xls）。先預覽並驗證資料，確認後才會覆寫目前場次；Excel 手機欄請設為文字，以保留開頭的 0。建議匯入前先下載現有名單備份。</p>
      <div class="actions">
-      <input accept=".csv,text/csv" class="input" id="csvFile" onchange="resetCsvPreview()" type="file"/>
+      <input accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" class="input" id="csvFile" onchange="resetCsvPreview()" type="file"/>
       <button class="btn btn-success" id="csvPreviewBtn" onclick="previewCsv()">🔍 預覽匯入</button>
-      <a class="btn" href="/api/sheets/import_csv/template">⬇️ 下載 CSV 範本</a>
+      <a class="btn" href="/api/sheets/import_csv/template">⬇️ 下載 CSV 範本（Excel 可開啟）</a>
      </div>
      <div id="csvPreviewPanel" style="display:none;margin-top:1rem">
       <div class="msg" id="csvPreviewSummary"></div>
@@ -631,7 +631,7 @@
 
    function handleCsvApiError(error, action) {
      if([401,403,409].includes(error?.status))resetCsvPreview();
-     alert(`CSV ${action}失敗：${error.message}`);
+     alert(`名單檔案${action}失敗：${error.message}`);
      if(error?.status===401)location.href='/login.html';
    }
 
@@ -641,9 +641,10 @@
 
    function renderCsvPreview(data, state) {
      const oldCount=data.existing_count===null||data.existing_count===undefined ? '目前無法讀取' : `${data.existing_count} 筆`;
+     const formatLabel=data.source_format==='xlsx' ? `Excel／工作表「${esc(data.worksheet_name||'未命名')}」` : 'CSV';
      document.getElementById('csvPreviewSummary').innerHTML=
        `<strong>目標場次：${esc(state.sheet)}</strong><br>`+
-       `CSV 共 ${Number(data.total_count)||0} 列；可匯入 <strong>${Number(data.valid_count)||0}</strong> 筆；略過 ${Number(data.skipped_count)||0} 筆。<br>`+
+       `${formatLabel} 共 ${Number(data.total_count)||0} 列；可匯入 <strong>${Number(data.valid_count)||0}</strong> 筆；略過 ${Number(data.skipped_count)||0} 筆。<br>`+
        `目前舊名單：${esc(oldCount)}。確認後會整批覆寫，既有報到狀態與報到時間將被清除。`;
      const rows=Array.isArray(data.rows)?data.rows:[];
      document.getElementById('csvPreviewBody').innerHTML=rows.map(row=>`<tr>
@@ -657,7 +658,8 @@
      if(csvRequestInFlight)return;
      const fileInput=document.getElementById('csvFile');
      const file=fileInput.files[0];
-     if(!file)return alert('請先選擇 CSV');
+     if(!file)return alert('請先選擇 CSV 或 XLSX 檔案');
+     if(!/\.(csv|xlsx)$/i.test(file.name))return alert('只支援 .csv 或 .xlsx 報到名單');
      if(!currentSheet)return alert('請先選擇並快速切換到目標場次');
      const selectedSheet=(document.getElementById('newSheetInput').value||document.getElementById('sheetSelect').value||'').trim();
      if(selectedSheet&&selectedSheet!==currentSheet) {
@@ -671,6 +673,10 @@
      try {
        const response=await fetch(csvImportUrl('preview', state), {method:'POST', body:fd});
        const data=await readCsvApiResponse(response);
+       if(
+         data.mode!=='preview'||!data.preview_token||Number(data.valid_count)<=0||
+         data.target?.admin!==state.admin||data.target?.sheet!==state.sheet
+       )throw new Error('伺服器預覽資料不完整，請重新整理後再試');
        csvPreviewState={...state, previewToken:data.preview_token, validCount:Number(data.valid_count)||0};
        renderCsvPreview(data, csvPreviewState);
      } catch(e) {
@@ -698,7 +704,8 @@
      try {
        const response=await fetch(csvImportUrl('commit', state), {method:'POST', body:fd});
        const data=await readCsvApiResponse(response);
-       alert(data.message||'CSV 匯入完成');
+       if(data.mode!=='commit')throw new Error('伺服器匯入回應不完整，請重新整理確認名單');
+       alert(data.message||'名單匯入完成');
        resetCsvPreview(true);
        try {
          await reloadAdminData();

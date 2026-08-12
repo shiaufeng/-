@@ -2,7 +2,11 @@ import copy
 import inspect
 import io
 import unittest
+import zipfile
+from datetime import date
 from unittest.mock import patch
+
+from openpyxl import Workbook
 
 import server
 
@@ -13,6 +17,26 @@ VALID_CSV = (
     ',,,,,,,,只有備註會被略過\r\n'
     '陳美玲,0987654321,mei@example.com,測試科技,專員,新竹,基層,A桌,\r\n'
 ).encode('utf-8')
+
+
+def make_xlsx(headers=None, rows=None, sheet_name='報到名單', extra_sheet=None):
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = sheet_name
+    worksheet.append(headers or ['姓名', '手機', 'Email', '公司名稱', '職稱', '地區', '職階', '桌號', '備註'])
+    for row in rows or [
+        ['王小明', '0912345678', 'ming@example.com', '範例公司', '經理', '台北', '中高階', '第12桌', '素食'],
+        ['陳美玲', '0987654321', 'mei@example.com', '測試科技', '專員', '新竹', '基層', 'A桌', ''],
+    ]:
+        worksheet.append(row)
+    if extra_sheet:
+        extra = workbook.create_sheet(extra_sheet)
+        extra.append(headers or ['姓名', '手機', '公司名稱'])
+        extra.append(['第二張', '0900000000', '第二公司'])
+    output = io.BytesIO()
+    workbook.save(output)
+    workbook.close()
+    return output.getvalue()
 
 
 def roster_row(row_id=1, status='pending'):
@@ -115,11 +139,19 @@ class FakeCursor:
             return
 
         if compact_sql.startswith('INSERT INTO csv_import_previews'):
-            token_hash, admin, sheet, file_sha256, valid_count, roster_count, revision, _ttl = args
+            (
+                token_hash, admin, sheet, file_sha256, normalized_rows_sha256,
+                source_format, worksheet_name, parser_version, valid_count,
+                roster_count, revision, _ttl,
+            ) = args
             self.db.previews[token_hash] = {
                 'admin_username': admin,
                 'google_sheet_name': sheet,
                 'file_sha256': file_sha256,
+                'normalized_rows_sha256': normalized_rows_sha256,
+                'source_format': source_format,
+                'worksheet_name': worksheet_name,
+                'parser_version': parser_version,
                 'valid_count': valid_count,
                 'roster_count': roster_count,
                 'roster_revision': revision,
@@ -210,13 +242,13 @@ class CsvImportTests(unittest.TestCase):
             user_session['current_admin_sheet'] = '活動A'
 
     @staticmethod
-    def upload_data(raw=VALID_CSV, token=None):
-        data = {'file': (io.BytesIO(raw), 'people.csv')}
+    def upload_data(raw=VALID_CSV, token=None, filename='people.csv'):
+        data = {'file': (io.BytesIO(raw), filename)}
         if token is not None:
             data['preview_token'] = token
         return data
 
-    def post_import(self, db, mode='preview', raw=VALID_CSV, token=None, admin='admin', sheet='活動A'):
+    def post_import(self, db, mode='preview', raw=VALID_CSV, token=None, admin='admin', sheet='活動A', filename='people.csv'):
         with (
             patch.object(server, 'get_db_connection', side_effect=db.connect),
             patch.object(server, 'ensure_core_tables'),
@@ -224,12 +256,12 @@ class CsvImportTests(unittest.TestCase):
         ):
             return self.client.post(
                 f'/api/sheets/import_csv?mode={mode}&admin={admin}&sheet={sheet}',
-                data=self.upload_data(raw, token),
+                data=self.upload_data(raw, token, filename),
                 content_type='multipart/form-data',
             )
 
-    def preview(self, db, raw=VALID_CSV):
-        response = self.post_import(db, raw=raw)
+    def preview(self, db, raw=VALID_CSV, filename='people.csv'):
+        response = self.post_import(db, raw=raw, filename=filename)
         self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
         return response.get_json()
 
@@ -252,6 +284,109 @@ class CsvImportTests(unittest.TestCase):
         result = server.parse_registration_csv(exported)
         self.assertEqual(result['rows'][0]['company'], '測試科技')
         self.assertEqual(result['rows'][0]['seat'], 'A')
+
+    def test_xlsx_parser_reads_unicode_sheet_and_preserves_text_phone(self):
+        raw = make_xlsx(sheet_name='貴賓名單')
+        parsed = server.parse_registration_upload(raw, 'people.xlsx')
+        self.assertEqual(parsed['source_format'], 'xlsx')
+        self.assertEqual(parsed['worksheet_name'], '貴賓名單')
+        self.assertEqual(parsed['valid_count'], 2)
+        self.assertEqual(parsed['rows'][0]['phone'], '0912345678')
+        self.assertEqual(parsed['rows'][0]['seat'], '12')
+
+    def test_xlsx_preview_and_commit_share_safe_import_flow(self):
+        raw = make_xlsx(sheet_name='貴賓名單')
+        db = FakeDatabase(roster=[roster_row(1)])
+        preview = self.preview(db, raw, 'people.xlsx')
+        self.assertEqual(preview['source_format'], 'xlsx')
+        self.assertEqual(preview['worksheet_name'], '貴賓名單')
+        self.assertEqual(preview['valid_count'], 2)
+        token_record = db.previews[server.csv_preview_token_hash(preview['preview_token'])]
+        self.assertEqual(token_record['source_format'], 'xlsx')
+        self.assertEqual(token_record['worksheet_name'], '貴賓名單')
+        self.assertEqual(token_record['parser_version'], server.REGISTRATION_PARSER_VERSION)
+        self.assertEqual(token_record['normalized_rows_sha256'], server.registration_rows_hash(
+            server.parse_registration_upload(raw, 'people.xlsx')['rows']
+        ))
+
+        response = self.post_import(
+            db, mode='commit', raw=raw, token=preview['preview_token'], filename='people.xlsx'
+        )
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        self.assertEqual(response.get_json()['source_format'], 'xlsx')
+        self.assertEqual([row['name'] for row in db.roster], ['王小明', '陳美玲'])
+
+    def test_xlsx_rejects_formulas_numeric_phone_and_multiple_roster_sheets(self):
+        invalid_files = [
+            (make_xlsx(rows=[['=1+1', '0912345678', '', '公司', '', '', '', '', '']]), '含公式'),
+            (make_xlsx(rows=[['王小明', 912345678, '', '公司', '', '', '', '', '']]), '數字格式'),
+            (make_xlsx(rows=[['王小明', date(2026, 8, 12), '', '公司', '', '', '', '', '']]), '不是文字格式'),
+            (make_xlsx(extra_sheet='第二份名單'), '多張可匯入'),
+        ]
+        for raw, message in invalid_files:
+            with self.subTest(message=message):
+                with patch.object(server, 'get_db_connection', side_effect=AssertionError('DB must not be called')):
+                    response = self.client.post(
+                        '/api/sheets/import_csv?mode=preview&admin=admin&sheet=活動A',
+                        data=self.upload_data(raw, filename='people.xlsx'),
+                        content_type='multipart/form-data',
+                    )
+                self.assertEqual(response.status_code, 400)
+                self.assertIn(message, response.get_json()['message'])
+
+    def test_xlsx_rejects_bad_zip_zip_bomb_and_unsupported_extensions(self):
+        bomb = io.BytesIO()
+        with zipfile.ZipFile(bomb, 'w', zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr('[Content_Types].xml', b'x')
+            archive.writestr('xl/workbook.xml', b'x' * 10000)
+        macro = io.BytesIO(make_xlsx())
+        with zipfile.ZipFile(macro, 'a', zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr('xl/VBAProject.bin', b'not-a-real-macro')
+        cases = [
+            (b'not a zip', 'people.xlsx', '不是有效'),
+            (bomb.getvalue(), 'people.xlsx', '壓縮比例異常'),
+            (macro.getvalue(), 'people.xlsx', '含巨集'),
+            (VALID_CSV, 'people.xls', '只支援 .csv 或 .xlsx'),
+            (VALID_CSV, 'people.txt', '只支援 .csv 或 .xlsx'),
+        ]
+        for raw, filename, message in cases:
+            with self.subTest(filename=filename, message=message):
+                with patch.object(server, 'get_db_connection', side_effect=AssertionError('DB must not be called')):
+                    response = self.client.post(
+                        '/api/sheets/import_csv?mode=preview&admin=admin&sheet=活動A',
+                        data=self.upload_data(raw, filename=filename),
+                        content_type='multipart/form-data',
+                    )
+                self.assertEqual(response.status_code, 400)
+                self.assertIn(message, response.get_json()['message'])
+
+    def test_xlsx_parser_limits_rows_columns_and_cell_length(self):
+        too_wide_headers = ['姓名'] + [f'欄{i}' for i in range(server.MAX_XLSX_COLUMNS)]
+        cases = [
+            (make_xlsx(headers=too_wide_headers, rows=[['王小明']]), '欄位超過'),
+            (make_xlsx(rows=[['王小明', '0912345678', '', '公司', '', '', '', '', 'x' * 11]]), '文字超過'),
+        ]
+        for raw, message in cases:
+            with self.subTest(message=message):
+                with (
+                    patch.object(server, 'MAX_XLSX_CELL_CHARACTERS', 10),
+                    patch.object(server, 'get_db_connection', side_effect=AssertionError('DB must not be called')),
+                ):
+                    response = self.client.post(
+                        '/api/sheets/import_csv?mode=preview&admin=admin&sheet=活動A',
+                        data=self.upload_data(raw, filename='people.xlsx'),
+                        content_type='multipart/form-data',
+                    )
+                self.assertEqual(response.status_code, 400)
+                self.assertIn(message, response.get_json()['message'])
+
+        row_limited = make_xlsx(rows=[
+            ['甲', '0911111111', '', '公司', '', '', '', '', ''],
+            ['乙', '0922222222', '', '公司', '', '', '', '', ''],
+        ])
+        with patch.object(server, 'MAX_CSV_ROWS', 1):
+            with self.assertRaisesRegex(ValueError, '超過 1 筆上限'):
+                server.parse_registration_upload(row_limited, 'people.xlsx')
 
     def test_malformed_or_uneven_csv_is_rejected_before_database(self):
         malformed_files = [

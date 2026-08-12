@@ -6,11 +6,13 @@ import json
 import hashlib
 import hmac
 import secrets
-from datetime import datetime
+import zipfile
+from datetime import date as date_type, datetime, time as time_type
 from urllib.parse import urlparse, quote, unquote
 
 from flask import Flask, request, jsonify, session, send_from_directory, Response
 from flask_cors import CORS
+from openpyxl import load_workbook
 import pymysql
 from pymysql.cursors import DictCursor
 
@@ -190,6 +192,10 @@ def ensure_core_tables(conn):
                 admin_username VARCHAR(120) NOT NULL,
                 google_sheet_name VARCHAR(255) NOT NULL,
                 file_sha256 CHAR(64) NOT NULL,
+                normalized_rows_sha256 CHAR(64) NOT NULL DEFAULT '',
+                source_format VARCHAR(20) NOT NULL DEFAULT 'csv',
+                worksheet_name VARCHAR(255),
+                parser_version VARCHAR(50) NOT NULL DEFAULT 'registration-v1',
                 valid_count INT NOT NULL,
                 roster_count INT NOT NULL,
                 roster_revision CHAR(64) NOT NULL,
@@ -218,6 +224,15 @@ def ensure_core_tables(conn):
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """
         )
+
+        preview_cols = {
+            'normalized_rows_sha256': "CHAR(64) NOT NULL DEFAULT ''",
+            'source_format': "VARCHAR(20) NOT NULL DEFAULT 'csv'",
+            'worksheet_name': 'VARCHAR(255)',
+            'parser_version': "VARCHAR(50) NOT NULL DEFAULT 'registration-v1'",
+        }
+        for col, spec in preview_cols.items():
+            add_col(cur, 'csv_import_previews', col, spec)
 
         cur.execute(
             """
@@ -359,7 +374,14 @@ def json_dumps(value):
 
 MAX_CSV_BYTES = 5 * 1024 * 1024
 MAX_CSV_ROWS = 50000
+MAX_XLSX_COLUMNS = 64
+MAX_XLSX_CELL_CHARACTERS = 10000
+MAX_XLSX_ZIP_ENTRIES = 1000
+MAX_XLSX_UNCOMPRESSED_BYTES = 50 * 1024 * 1024
+MAX_XLSX_MEMBER_BYTES = 20 * 1024 * 1024
+MAX_XLSX_COMPRESSION_RATIO = 100
 CSV_PREVIEW_TOKEN_TTL_SECONDS = 15 * 60
+REGISTRATION_PARSER_VERSION = 'registration-v2'
 REGISTRATION_FIELD_ALIASES = {
     'name': ['姓名', 'name', 'Name', '名字', '貴賓姓名'],
     'phone': ['手機', '電話', 'phone', 'Phone', '行動電話', '手機號碼'],
@@ -405,6 +427,16 @@ def csv_preview_token_hash(token):
 
 def csv_file_hash(raw):
     return hashlib.sha256(raw).hexdigest()
+
+
+def registration_rows_hash(rows):
+    payload = json.dumps(
+        rows or [],
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(',', ':'),
+    ).encode('utf-8')
+    return hashlib.sha256(payload).hexdigest()
 
 
 def csv_roster_revision(rows):
@@ -532,6 +564,43 @@ def normalize_registration(row):
     }
 
 
+def validate_registration_headers(fieldnames, format_label):
+    cleaned = [str(name or '').lstrip('\ufeff').strip() for name in (fieldnames or [])]
+    if not cleaned or not any(cleaned):
+        raise ValueError(f'{format_label} 沒有標題列，請確認第一列是欄位名稱')
+
+    recognized_columns = [
+        REGISTRATION_ALIAS_TO_FIELD[normalize_csv_header(name)]
+        for name in cleaned
+        if normalize_csv_header(name) in REGISTRATION_ALIAS_TO_FIELD
+    ]
+    recognized_fields = set(recognized_columns)
+    if not recognized_fields:
+        raise ValueError(f'{format_label} 欄名無法辨識，請使用系統提供的範本')
+    duplicate_fields = sorted({field for field in recognized_columns if recognized_columns.count(field) > 1})
+    if duplicate_fields:
+        raise ValueError(f'{format_label} 有重複用途的欄位，請使用系統提供的範本')
+    if not recognized_fields.intersection(REGISTRATION_REQUIRED_FIELDS):
+        raise ValueError(f'{format_label} 至少需要「姓名」、「手機」或「公司名稱」其中一個欄位')
+    return cleaned, recognized_fields
+
+
+def registration_parse_result(format_label, source_format, headers, recognized_fields, valid_rows, total_count, **extra):
+    skipped_count = total_count - len(valid_rows)
+    if not valid_rows:
+        raise ValueError(f'{format_label} 沒有可匯入的有效資料，原有名單未變更')
+    return {
+        'source_format': source_format,
+        'headers': headers,
+        'recognized_fields': sorted(recognized_fields),
+        'rows': valid_rows,
+        'total_count': total_count,
+        'valid_count': len(valid_rows),
+        'skipped_count': skipped_count,
+        **extra,
+    }
+
+
 def decode_registration_csv(raw):
     if not raw:
         raise ValueError('CSV 檔案是空的')
@@ -564,23 +633,7 @@ def parse_registration_csv(raw):
             restval=None,
             strict=True,
         )
-        fieldnames = [str(name or '').lstrip('\ufeff').strip() for name in (reader.fieldnames or [])]
-        if not fieldnames or not any(fieldnames):
-            raise ValueError('CSV 沒有標題列，請確認第一列是欄位名稱')
-
-        recognized_columns = [
-            REGISTRATION_ALIAS_TO_FIELD[normalize_csv_header(name)]
-            for name in fieldnames
-            if normalize_csv_header(name) in REGISTRATION_ALIAS_TO_FIELD
-        ]
-        recognized_fields = set(recognized_columns)
-        if not recognized_fields:
-            raise ValueError('CSV 欄名無法辨識，請下載並使用系統提供的 CSV 範本')
-        duplicate_fields = sorted({field for field in recognized_columns if recognized_columns.count(field) > 1})
-        if duplicate_fields:
-            raise ValueError('CSV 有重複用途的欄位，請使用系統提供的 CSV 範本')
-        if not recognized_fields.intersection(REGISTRATION_REQUIRED_FIELDS):
-            raise ValueError('CSV 至少需要「姓名」、「手機」或「公司名稱」其中一個欄位')
+        fieldnames, recognized_fields = validate_registration_headers(reader.fieldnames, 'CSV')
 
         valid_rows = []
         total_count = 0
@@ -599,19 +652,187 @@ def parse_registration_csv(raw):
     except csv.Error as err:
         raise ValueError(f'CSV 格式解析失敗：{err}') from err
 
-    skipped_count = total_count - len(valid_rows)
-    if not valid_rows:
-        raise ValueError('CSV 沒有可匯入的有效資料，原有名單未變更')
+    return registration_parse_result(
+        'CSV', 'csv', fieldnames, recognized_fields, valid_rows, total_count,
+        encoding=encoding,
+        worksheet_name=None,
+    )
 
-    return {
-        'encoding': encoding,
-        'headers': fieldnames,
-        'recognized_fields': sorted(recognized_fields),
-        'rows': valid_rows,
-        'total_count': total_count,
-        'valid_count': len(valid_rows),
-        'skipped_count': skipped_count,
-    }
+
+def validate_xlsx_archive(raw):
+    if not raw:
+        raise ValueError('Excel 檔案是空的')
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+            members = archive.infolist()
+            if not members or len(members) > MAX_XLSX_ZIP_ENTRIES:
+                raise ValueError('Excel 檔案結構過大或不完整')
+
+            names = [member.filename for member in members]
+            if len(names) != len(set(names)):
+                raise ValueError('Excel 檔案含有重複的內部項目')
+            if '[Content_Types].xml' not in names or 'xl/workbook.xml' not in names:
+                raise ValueError('檔案不是有效的 XLSX 活頁簿')
+            lower_names = [name.lower() for name in names]
+            if any(
+                name.startswith(('xl/vbaproject', 'xl/activex/', 'xl/embeddings/'))
+                for name in lower_names
+            ):
+                raise ValueError('不支援含巨集、ActiveX 或嵌入物件的 Excel 檔案')
+
+            total_size = 0
+            for member in members:
+                name = member.filename.replace('\\', '/')
+                path_parts = [part for part in name.split('/') if part not in ['', '.']]
+                if (
+                    '\x00' in name
+                    or name.startswith('/')
+                    or re.match(r'^[A-Za-z]:', name)
+                    or '..' in path_parts
+                    or member.flag_bits & 0x1
+                    or member.compress_type not in [zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED]
+                ):
+                    raise ValueError('Excel 檔案含有不安全或不支援的內部項目')
+                if member.file_size > MAX_XLSX_MEMBER_BYTES:
+                    raise ValueError('Excel 檔案解壓後的單一項目過大')
+                if member.compress_size == 0:
+                    ratio = float('inf') if member.file_size else 1
+                else:
+                    ratio = member.file_size / member.compress_size
+                if ratio > MAX_XLSX_COMPRESSION_RATIO:
+                    raise ValueError('Excel 檔案壓縮比例異常，無法安全處理')
+                total_size += member.file_size
+                if total_size > MAX_XLSX_UNCOMPRESSED_BYTES:
+                    raise ValueError('Excel 檔案解壓後超過安全上限')
+    except (zipfile.BadZipFile, zipfile.LargeZipFile) as err:
+        raise ValueError('檔案不是有效的 XLSX 活頁簿') from err
+
+
+def excel_cell_to_text(cell, field=None):
+    if cell.data_type == 'f':
+        raise ValueError(f'Excel 第 {cell.row} 列「{cell.column_letter}」含公式，請先貼上為純值')
+    if cell.data_type == 'e':
+        raise ValueError(f'Excel 第 {cell.row} 列「{cell.column_letter}」含錯誤值，請先修正')
+
+    value = cell.value
+    if value is None:
+        return ''
+    if isinstance(value, bool):
+        raise ValueError(f'Excel 第 {cell.row} 列「{cell.column_letter}」是布林值，請改成文字')
+    if isinstance(value, (datetime, date_type, time_type)):
+        if field == 'phone':
+            raise ValueError(f'Excel 第 {cell.row} 列手機不是文字格式，請改為文字以保留原始內容')
+        text = value.isoformat(sep=' ') if isinstance(value, datetime) else value.isoformat()
+    elif isinstance(value, int):
+        if field == 'phone':
+            raise ValueError(f'Excel 第 {cell.row} 列手機是數字格式，請改為文字以保留開頭的 0')
+        text = str(value)
+    elif isinstance(value, float):
+        if value != value or value in [float('inf'), float('-inf')]:
+            raise ValueError(f'Excel 第 {cell.row} 列「{cell.column_letter}」不是有效數字')
+        if field == 'phone':
+            raise ValueError(f'Excel 第 {cell.row} 列手機是數字格式，請改為文字以保留開頭的 0')
+        text = str(int(value)) if value.is_integer() else format(value, '.15g')
+    else:
+        text = str(value).strip()
+    if len(text) > MAX_XLSX_CELL_CHARACTERS:
+        raise ValueError(f'Excel 第 {cell.row} 列「{cell.column_letter}」文字超過長度上限')
+    return text
+
+
+def find_registration_worksheet(workbook):
+    candidates = []
+    for worksheet in workbook.worksheets:
+        if worksheet.sheet_state != 'visible':
+            continue
+        merged_cells = getattr(worksheet, 'merged_cells', None)
+        if merged_cells is not None and len(merged_cells.ranges):
+            raise ValueError(f'Excel 工作表「{worksheet.title}」含合併儲存格，請取消合併後再匯入')
+        reported_columns = worksheet.max_column or 0
+        scan_columns = min(max(reported_columns, 1), MAX_XLSX_COLUMNS + 1)
+        header_cells = next(
+            worksheet.iter_rows(min_row=1, max_row=1, max_col=scan_columns),
+            (),
+        )
+        headers = [excel_cell_to_text(cell) for cell in header_cells]
+        recognized = {
+            REGISTRATION_ALIAS_TO_FIELD[normalize_csv_header(header)]
+            for header in headers
+            if normalize_csv_header(header) in REGISTRATION_ALIAS_TO_FIELD
+        }
+        if recognized.intersection(REGISTRATION_REQUIRED_FIELDS):
+            if reported_columns > MAX_XLSX_COLUMNS:
+                raise ValueError(f'Excel 工作表「{worksheet.title}」欄位超過 {MAX_XLSX_COLUMNS} 欄上限')
+            candidates.append((worksheet, headers))
+
+    if not candidates:
+        raise ValueError('Excel 找不到可辨識的報到名單工作表；請把欄位名稱放在第一列')
+    if len(candidates) > 1:
+        names = '、'.join(f'「{worksheet.title}」' for worksheet, _ in candidates[:5])
+        raise ValueError(f'Excel 有多張可匯入的工作表（{names}），請只保留一張報到名單')
+    return candidates[0]
+
+
+def parse_registration_xlsx(raw):
+    validate_xlsx_archive(raw)
+    workbook = None
+    try:
+        workbook = load_workbook(
+            io.BytesIO(raw),
+            read_only=True,
+            data_only=False,
+            keep_links=False,
+            keep_vba=False,
+            rich_text=False,
+        )
+        worksheet, header_values = find_registration_worksheet(workbook)
+        fieldnames, recognized_fields = validate_registration_headers(header_values, 'Excel')
+        field_by_index = [REGISTRATION_ALIAS_TO_FIELD.get(normalize_csv_header(name)) for name in fieldnames]
+        valid_rows = []
+        total_count = 0
+        for scanned_rows, cells in enumerate(
+            worksheet.iter_rows(min_row=2, max_col=len(fieldnames)),
+            start=1,
+        ):
+            if scanned_rows > MAX_CSV_ROWS:
+                raise ValueError(f'Excel 超過 {MAX_CSV_ROWS:,} 筆上限，請拆成較小的檔案')
+            row_values = [
+                excel_cell_to_text(cell, field_by_index[index])
+                for index, cell in enumerate(cells)
+            ]
+            if not any(row_values):
+                continue
+            total_count += 1
+            raw_row = dict(zip(fieldnames, row_values))
+            normalized_row = normalize_registration(raw_row)
+            if normalized_row['name'] or normalized_row['phone'] or normalized_row['company']:
+                valid_rows.append(normalized_row)
+
+        return registration_parse_result(
+            'Excel', 'xlsx', fieldnames, recognized_fields, valid_rows, total_count,
+            encoding=None,
+            worksheet_name=worksheet.title,
+        )
+    except ValueError:
+        raise
+    except Exception as err:
+        raise ValueError('檔案不是有效的 XLSX 活頁簿') from err
+    finally:
+        if workbook is not None:
+            workbook.close()
+
+
+def parse_registration_upload(raw, filename):
+    extension = os.path.splitext(clean_text(filename).lower())[1]
+    if extension == '.csv':
+        if raw.startswith(b'PK\x03\x04'):
+            raise ValueError('檔案內容是 Excel，請使用正確的 .xlsx 副檔名')
+        return parse_registration_csv(raw)
+    if extension == '.xlsx':
+        return parse_registration_xlsx(raw)
+    if extension in ['.xls', '.xlsm', '.xlsb']:
+        raise ValueError('只支援 .csv 或 .xlsx；請將舊版或含巨集的 Excel 另存為 .xlsx')
+    raise ValueError('只支援 .csv 或 .xlsx 報到名單')
 
 
 def portrait_status_from_row(row):
@@ -1427,7 +1648,7 @@ def api_search_query_alias():
 
 
 # ============================================================
-# CSV import / export / delete
+# Roster import / export / delete
 # ============================================================
 @app.route('/api/sheets/import_csv/template', methods=['GET'])
 def import_csv_template_api():
@@ -1448,7 +1669,7 @@ def import_csv_api():
     try:
         mode = clean_text(request.args.get('mode') or request.form.get('mode') or 'preview').lower()
         if mode not in ['preview', 'commit']:
-            return jsonify(success=False, message='不支援的 CSV 匯入模式'), 400
+            return jsonify(success=False, message='不支援的名單匯入模式'), 400
 
         session_username = clean_text(session.get('username'))
         if not session.get('admin_logged_in') or not session_username:
@@ -1459,14 +1680,14 @@ def import_csv_api():
 
         upload = request.files.get('file') or request.files.get('csv') or request.files.get('upload')
         if not upload:
-            return jsonify(success=False, message='找不到 CSV 檔案'), 400
+            return jsonify(success=False, message='找不到上傳檔案'), 400
 
         raw = upload.stream.read(MAX_CSV_BYTES + 1)
         if len(raw) > MAX_CSV_BYTES:
-            return jsonify(success=False, message='CSV 檔案超過 5 MB 上限'), 413
+            return jsonify(success=False, message='名單檔案超過 5 MB 上限'), 413
 
         try:
-            parsed = parse_registration_csv(raw)
+            parsed = parse_registration_upload(raw, upload.filename or '')
         except ValueError as err:
             return jsonify(success=False, message=str(err)), 400
 
@@ -1503,12 +1724,15 @@ def import_csv_api():
                 cur.execute(
                     """
                     INSERT INTO csv_import_previews
-                    (token_hash, admin_username, google_sheet_name, file_sha256, valid_count,
-                     roster_count, roster_revision, expires_at)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,DATE_ADD(NOW(), INTERVAL %s SECOND))
+                    (token_hash, admin_username, google_sheet_name, file_sha256,
+                     normalized_rows_sha256, source_format, worksheet_name, parser_version,
+                     valid_count, roster_count, roster_revision, expires_at)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,DATE_ADD(NOW(), INTERVAL %s SECOND))
                     """,
                     (
                         csv_preview_token_hash(preview_token), admin, sheet, csv_file_hash(raw),
+                        registration_rows_hash(parsed['rows']), parsed['source_format'],
+                        parsed.get('worksheet_name'), REGISTRATION_PARSER_VERSION,
                         parsed['valid_count'], existing_count, roster_revision,
                         CSV_PREVIEW_TOKEN_TTL_SECONDS,
                     ),
@@ -1530,14 +1754,16 @@ def import_csv_api():
             return jsonify(
                 success=True,
                 mode='preview',
-                message=f"CSV 驗證完成：可匯入 {parsed['valid_count']} 筆",
+                message=f"名單驗證完成：可匯入 {parsed['valid_count']} 筆",
                 target={'admin': admin, 'sheet': sheet},
                 filename=upload.filename or '',
+                source_format=parsed['source_format'],
+                worksheet_name=parsed.get('worksheet_name'),
                 total_count=parsed['total_count'],
                 valid_count=parsed['valid_count'],
                 skipped_count=parsed['skipped_count'],
                 existing_count=existing_count,
-                detected_encoding=parsed['encoding'],
+                detected_encoding=parsed.get('encoding'),
                 headers=parsed['headers'],
                 recognized_fields=parsed['recognized_fields'],
                 rows=preview_rows,
@@ -1546,7 +1772,7 @@ def import_csv_api():
 
         preview_token = clean_text(request.form.get('preview_token'))
         if len(preview_token) < 32 or len(preview_token) > 200:
-            return jsonify(success=False, message='CSV 預覽憑證無效，請重新預覽'), 409
+            return jsonify(success=False, message='名單預覽憑證無效，請重新預覽'), 409
 
         rows = parsed['rows']
         inserted_count = 0
@@ -1554,7 +1780,8 @@ def import_csv_api():
             lock_event_mutations(cur, admin, sheet)
             cur.execute(
                 """
-                SELECT admin_username, google_sheet_name, file_sha256, valid_count,
+                SELECT admin_username, google_sheet_name, file_sha256, normalized_rows_sha256,
+                       source_format, worksheet_name, parser_version, valid_count,
                        roster_count, roster_revision
                 FROM csv_import_previews
                 WHERE token_hash=%s AND used_at IS NULL AND expires_at >= NOW()
@@ -1565,17 +1792,24 @@ def import_csv_api():
             preview = cur.fetchone()
             if not preview:
                 conn.rollback()
-                return jsonify(success=False, message='CSV 預覽已失效或已使用，請重新預覽'), 409
+                return jsonify(success=False, message='名單預覽已失效或已使用，請重新預覽'), 409
 
             preview_matches = (
                 preview.get('admin_username') == admin
                 and preview.get('google_sheet_name') == sheet
                 and int(preview.get('valid_count') or -1) == parsed['valid_count']
                 and hmac.compare_digest(str(preview.get('file_sha256') or ''), csv_file_hash(raw))
+                and hmac.compare_digest(
+                    str(preview.get('normalized_rows_sha256') or ''),
+                    registration_rows_hash(parsed['rows']),
+                )
+                and preview.get('source_format') == parsed['source_format']
+                and clean_text(preview.get('worksheet_name')) == clean_text(parsed.get('worksheet_name'))
+                and preview.get('parser_version') == REGISTRATION_PARSER_VERSION
             )
             if not preview_matches:
                 conn.rollback()
-                return jsonify(success=False, message='CSV 檔案或目標場次已變更，請重新預覽'), 409
+                return jsonify(success=False, message='名單檔案或目標場次已變更，請重新預覽'), 409
 
             current_count, current_revision = load_csv_roster_snapshot(cur, admin, sheet, for_update=True)
             if (
@@ -1591,7 +1825,7 @@ def import_csv_api():
             )
             if cur.rowcount != 1:
                 conn.rollback()
-                return jsonify(success=False, message='CSV 預覽已失效或已使用，請重新預覽'), 409
+                return jsonify(success=False, message='名單預覽已失效或已使用，請重新預覽'), 409
 
             cur.execute("DELETE FROM event_registrations WHERE admin_username=%s AND google_sheet_name=%s", (admin, sheet))
             for r in rows:
@@ -1612,7 +1846,9 @@ def import_csv_api():
         return jsonify(
             success=True,
             mode='commit',
-            message=f'CSV 匯入完成：已寫入 {inserted_count} 筆，略過 {parsed["skipped_count"]} 筆',
+            message=f'名單匯入完成：已寫入 {inserted_count} 筆，略過 {parsed["skipped_count"]} 筆',
+            source_format=parsed['source_format'],
+            worksheet_name=parsed.get('worksheet_name'),
             count=inserted_count,
             inserted_count=inserted_count,
             total_count=parsed['total_count'],
