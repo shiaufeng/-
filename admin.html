@@ -203,9 +203,9 @@
      <div class="panel-title">系統基本設定</div>
      <label>當前作用中 MySQL 雲端活動資料庫場次</label>
      <div class="actions">
-      <select class="input" id="sheetSelect" style="max-width:420px"></select>
-      <input class="input" id="newSheetInput" placeholder="新增/輸入場次名稱" style="max-width:280px"/>
-      <button class="btn btn-success" onclick="switchSheet()">⚡ 快速切換</button>
+      <select class="input" id="sheetSelect" onchange="resetCsvPreview()" style="max-width:420px"></select>
+      <input class="input" id="newSheetInput" oninput="resetCsvPreview()" placeholder="新增/輸入場次名稱" style="max-width:280px"/>
+      <button class="btn btn-success" id="sheetSwitchBtn" onclick="switchSheet()">⚡ 快速切換</button>
      </div>
      <p class="msg">切換場次只會切換目前作用中的 MySQL 活動，不會重整整個後台。</p>
     </div>
@@ -240,9 +240,26 @@
      </div>
     </div>
     <div class="panel">
-     <div class="panel-title">本機名單一鍵覆寫同步</div>
-     <input accept=".csv,text/csv" class="input" id="csvFile" type="file"/>
-     <button class="btn btn-success" onclick="importCsv()" style="margin-top:.7rem">選擇 CSV 並匯入</button>
+     <div class="panel-title">報到名單 CSV 安全匯入</div>
+     <p class="msg">先預覽並驗證資料，確認後才會覆寫目前場次。建議匯入前先在「戰情儀表板」下載現有名單備份。</p>
+     <div class="actions">
+      <input accept=".csv,text/csv" class="input" id="csvFile" onchange="resetCsvPreview()" type="file"/>
+      <button class="btn btn-success" id="csvPreviewBtn" onclick="previewCsv()">🔍 預覽匯入</button>
+      <a class="btn" href="/api/sheets/import_csv/template">⬇️ 下載 CSV 範本</a>
+     </div>
+     <div id="csvPreviewPanel" style="display:none;margin-top:1rem">
+      <div class="msg" id="csvPreviewSummary"></div>
+      <div class="table-wrap" style="margin-top:.8rem">
+       <table>
+        <thead><tr><th>姓名</th><th>手機</th><th>公司</th><th>職稱</th><th>桌號</th><th>備註</th></tr></thead>
+        <tbody id="csvPreviewBody"></tbody>
+       </table>
+      </div>
+      <div class="actions" style="margin-top:.8rem">
+       <button class="btn" id="csvCancelBtn" onclick="resetCsvPreview()">取消</button>
+       <button class="btn btn-success" id="csvCommitBtn" onclick="commitCsvImport()">⚠️ 確認覆寫匯入</button>
+      </div>
+     </div>
     </div>
    </section>
    
@@ -350,6 +367,8 @@
    let companies=[];
    let tableDetailsByKey={};
    let dashboardTimer=null;
+   let csvPreviewState=null;
+   let csvRequestInFlight=false;
    
    // 修改為對應前台成功頁的4張卡片
    const expFields=[
@@ -445,8 +464,10 @@
    }
 
    async function reloadAdminData() {
-     await Promise.allSettled([loadExperienceConfig(), updateDashboard(), loadProducts(), loadAgenda(), loadIndustryMappings(), loadExhibitors(), loadCompanies()]);
+     const results=await Promise.allSettled([loadExperienceConfig(), updateDashboard(), loadProducts(), loadAgenda(), loadIndustryMappings(), loadExhibitors(), loadCompanies()]);
      updateLinks();
+     const failed=results.filter(result=>result.status==='rejected');
+     if(failed.length)throw new Error(`${failed.length} 項後台資料載入失敗，請按「重新載入全部資料」再試一次`);
      toast('後台資料已重新連動載入');
    }
 
@@ -463,6 +484,7 @@
      if(!d.success)return alert(d.message||'切換失敗');
      currentSheet=d.current_sheet;
      document.getElementById('newSheetInput').value='';
+     resetCsvPreview(true);
      await fetchCurrentSheet();
      await reloadAdminData();
    }
@@ -491,18 +513,16 @@
    }
 
    async function updateDashboard(){
-     try{
-       const d=await get(`${API_BASE}/dashboard_stats${qs()}&t=${Date.now()}`);
-       if(!d.success)return;
-       const s=d.stats||{};
-       setText('stat-total',s.total||0);
-       setText('stat-checked',s.checked_in||0);
-       setText('stat-pending',s.not_checked_in||0);
-       tableDetailsByKey={};
-       (s.table_details||[]).forEach(g=>{tableDetailsByKey[String(g.table||g.seat||'未分桌')]=g.members||[];});
-       renderLogs(s.logs||[]);
-       renderTableStats(s.table_stats||[]);
-     }catch(e){ console.error(e); }
+     const d=await get(`${API_BASE}/dashboard_stats${qs()}&t=${Date.now()}`);
+     if(!d.success)throw new Error(d.message||'戰情儀表板載入失敗');
+     const s=d.stats||{};
+     setText('stat-total',s.total||0);
+     setText('stat-checked',s.checked_in||0);
+     setText('stat-pending',s.not_checked_in||0);
+     tableDetailsByKey={};
+     (s.table_details||[]).forEach(g=>{tableDetailsByKey[String(g.table||g.seat||'未分桌')]=g.members||[];});
+     renderLogs(s.logs||[]);
+     renderTableStats(s.table_stats||[]);
    }
 
    function portraitLabel(x){
@@ -565,18 +585,132 @@
 
    function closeTableDetails(){document.getElementById('tableDetailModal').classList.remove('active');}
 
-   async function importCsv() {
+   function csvFileKey(file) {
+     return file ? `${file.name}|${file.size}|${file.lastModified}` : '';
+   }
+
+   function resetCsvPreview(clearFile=false) {
+     csvPreviewState=null;
+     const panel=document.getElementById('csvPreviewPanel');
+     if(panel)panel.style.display='none';
+     const body=document.getElementById('csvPreviewBody');
+     if(body)body.innerHTML='';
+     if(clearFile)document.getElementById('csvFile').value='';
+     setCsvImportBusy(false);
+   }
+
+   function setCsvImportBusy(busy) {
+     csvRequestInFlight=busy;
      const fileInput=document.getElementById('csvFile');
-     const f=fileInput.files[0];
-     if(!f)return alert('請選擇 CSV');
-     const fd=new FormData(); fd.append('file', f);
+     const previewBtn=document.getElementById('csvPreviewBtn');
+     const commitBtn=document.getElementById('csvCommitBtn');
+     const cancelBtn=document.getElementById('csvCancelBtn');
+     const sheetSelect=document.getElementById('sheetSelect');
+     const newSheetInput=document.getElementById('newSheetInput');
+     const sheetSwitchBtn=document.getElementById('sheetSwitchBtn');
+     if(fileInput)fileInput.disabled=busy;
+     if(previewBtn)previewBtn.disabled=busy;
+     if(commitBtn)commitBtn.disabled=busy||!csvPreviewState;
+     if(cancelBtn)cancelBtn.disabled=busy;
+     if(sheetSelect)sheetSelect.disabled=busy;
+     if(newSheetInput)newSheetInput.disabled=busy;
+     if(sheetSwitchBtn)sheetSwitchBtn.disabled=busy;
+   }
+
+   async function readCsvApiResponse(response) {
+     const text=await response.text();
+     let data=null;
+     try { data=text ? JSON.parse(text) : null; } catch {}
+     if(!response.ok||!data?.success) {
+       const error=new Error(data?.message||text.trim()||`伺服器回應錯誤（HTTP ${response.status}）`);
+       error.status=response.status;
+       throw error;
+     }
+     return data;
+   }
+
+   function handleCsvApiError(error, action) {
+     if([401,403,409].includes(error?.status))resetCsvPreview();
+     alert(`CSV ${action}失敗：${error.message}`);
+     if(error?.status===401)location.href='/login.html';
+   }
+
+   function csvImportUrl(mode, state) {
+     return `${API_BASE}/sheets/import_csv?mode=${enc(mode)}&admin=${enc(state.admin)}&sheet=${enc(state.sheet)}&t=${Date.now()}`;
+   }
+
+   function renderCsvPreview(data, state) {
+     const oldCount=data.existing_count===null||data.existing_count===undefined ? '目前無法讀取' : `${data.existing_count} 筆`;
+     document.getElementById('csvPreviewSummary').innerHTML=
+       `<strong>目標場次：${esc(state.sheet)}</strong><br>`+
+       `CSV 共 ${Number(data.total_count)||0} 列；可匯入 <strong>${Number(data.valid_count)||0}</strong> 筆；略過 ${Number(data.skipped_count)||0} 筆。<br>`+
+       `目前舊名單：${esc(oldCount)}。確認後會整批覆寫，既有報到狀態與報到時間將被清除。`;
+     const rows=Array.isArray(data.rows)?data.rows:[];
+     document.getElementById('csvPreviewBody').innerHTML=rows.map(row=>`<tr>
+       <td>${esc(row.name)}</td><td>${esc(row.phone)}</td><td>${esc(row.company)}</td>
+       <td>${esc(row.job_title)}</td><td>${esc(row.seat)}</td><td>${esc(row.special_notes)}</td>
+     </tr>`).join('')||'<tr><td colspan="6" class="muted">沒有可預覽資料</td></tr>';
+     document.getElementById('csvPreviewPanel').style.display='block';
+   }
+
+   async function previewCsv() {
+     if(csvRequestInFlight)return;
+     const fileInput=document.getElementById('csvFile');
+     const file=fileInput.files[0];
+     if(!file)return alert('請先選擇 CSV');
+     if(!currentSheet)return alert('請先選擇並快速切換到目標場次');
+     const selectedSheet=(document.getElementById('newSheetInput').value||document.getElementById('sheetSelect').value||'').trim();
+     if(selectedSheet&&selectedSheet!==currentSheet) {
+       return alert(`目前後台仍在「${currentSheet}」。請先按「快速切換」套用「${selectedSheet}」，再預覽匯入。`);
+     }
+     const state={file, fileKey:csvFileKey(file), admin:currentAdmin, sheet:currentSheet};
+     const fd=new FormData();
+     fd.append('file', file, file.name);
+     resetCsvPreview();
+     setCsvImportBusy(true);
      try {
-       const r=await fetch(`${API_BASE}/sheets/import_csv${qs()}&t=${Date.now()}`, {method:'POST', body:fd});
-       const text=await r.text();
-       let d; try { d=JSON.parse(text); } catch { d={success:false,message:text||'CSV 匯入回應格式錯誤'}; }
-       alert(d.message|| (d.success?'匯入完成':'匯入失敗'));
-       if(d.success){ fileInput.value=''; await reloadAdminData(); signalDashboard(); }
-     } catch(e) { alert('CSV 匯入失敗：'+e.message); }
+       const response=await fetch(csvImportUrl('preview', state), {method:'POST', body:fd});
+       const data=await readCsvApiResponse(response);
+       csvPreviewState={...state, previewToken:data.preview_token, validCount:Number(data.valid_count)||0};
+       renderCsvPreview(data, csvPreviewState);
+     } catch(e) {
+       handleCsvApiError(e, '預覽');
+     } finally {
+       setCsvImportBusy(false);
+     }
+   }
+
+   async function commitCsvImport() {
+     if(csvRequestInFlight||!csvPreviewState)return;
+     const state=csvPreviewState;
+     const currentFile=document.getElementById('csvFile').files[0];
+     if(!currentFile||csvFileKey(currentFile)!==state.fileKey||currentAdmin!==state.admin||currentSheet!==state.sheet) {
+       resetCsvPreview();
+       return alert('檔案或目標場次已變更，請重新預覽');
+     }
+     const warning=`即將以 ${state.validCount} 筆新名單覆寫「${state.sheet}」。\n\n舊名單及既有報到狀態將被清除，確定要繼續嗎？`;
+     if(!confirm(warning))return;
+
+     const fd=new FormData();
+     fd.append('file', state.file, state.file.name);
+     fd.append('preview_token', state.previewToken);
+     setCsvImportBusy(true);
+     try {
+       const response=await fetch(csvImportUrl('commit', state), {method:'POST', body:fd});
+       const data=await readCsvApiResponse(response);
+       alert(data.message||'CSV 匯入完成');
+       resetCsvPreview(true);
+       try {
+         await reloadAdminData();
+         signalDashboard();
+       } catch(e) {
+         alert('匯入已完成，但後台畫面重新載入失敗：'+e.message);
+       }
+     } catch(e) {
+       handleCsvApiError(e, '正式匯入');
+     } finally {
+       setCsvImportBusy(false);
+     }
    }
 
    async function loadProducts() {
@@ -639,11 +773,10 @@
    }
 
    async function loadCompanies() {
-     try {
-       const d=await get(`${API_BASE}/companies${qs()}&t=${Date.now()}`);
-       companies=d.companies||[];
-       document.getElementById('companyChips').innerHTML=companies.slice(0, 80).map(c=>`<span class="pill">${esc(c)}</span>`).join('')||'<span class="muted">公司清單載入中...</span>';
-     } catch {}
+     const d=await get(`${API_BASE}/companies${qs()}&t=${Date.now()}`);
+     if(!d.success)throw new Error(d.message||'公司清單載入失敗');
+     companies=d.companies||[];
+     document.getElementById('companyChips').innerHTML=companies.slice(0, 80).map(c=>`<span class="pill">${esc(c)}</span>`).join('')||'<span class="muted">尚無公司資料</span>';
    }
 
    async function loadIndustryMappings() {

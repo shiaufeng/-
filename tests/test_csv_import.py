@@ -1,0 +1,457 @@
+import copy
+import inspect
+import io
+import unittest
+from unittest.mock import patch
+
+import server
+
+
+VALID_CSV = (
+    '\ufeff姓名,手機,Email,公司名稱,職稱,地區,職階,桌號,備註\r\n'
+    '王小明,0912345678,ming@example.com,範例公司,經理,台北,中高階,第12桌,"素食,不吃香菜"\r\n'
+    ',,,,,,,,只有備註會被略過\r\n'
+    '陳美玲,0987654321,mei@example.com,測試科技,專員,新竹,基層,A桌,\r\n'
+).encode('utf-8')
+
+
+def roster_row(row_id=1, status='pending'):
+    return {
+        'id': row_id,
+        'admin_username': 'admin',
+        'google_sheet_name': '活動A',
+        'name': f'既有名單{row_id}',
+        'phone': f'090000000{row_id}',
+        'company': '既有公司',
+        'status': status,
+        'updated_at': '2026-08-12 10:00:00',
+    }
+
+
+class FakeDatabase:
+    def __init__(self, roster=None, allowed_events='活動A'):
+        self.roster = copy.deepcopy(roster or [])
+        self.allowed_events = allowed_events
+        self.admin_exists = True
+        self.previews = {}
+        self.connections = []
+        self.fail_on_insert = None
+        self.fail_on_snapshot = False
+
+    def connect(self):
+        connection = FakeConnection(self)
+        self.connections.append(connection)
+        return connection
+
+
+class FakeCursor:
+    def __init__(self, connection):
+        self.connection = connection
+        self.db = connection.db
+        self._one = None
+        self._all = []
+        self.rowcount = 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def execute(self, sql, args=()):
+        compact_sql = ' '.join(sql.split())
+        self.connection.statements.append((compact_sql, args))
+        self._one = None
+        self._all = []
+        self.rowcount = 0
+
+        if compact_sql.startswith('SELECT allowed_events FROM admins'):
+            self._one = {'allowed_events': self.db.allowed_events} if self.db.admin_exists else None
+            return
+
+        if compact_sql.startswith('SELECT id FROM event_configs'):
+            self._one = {'id': 1}
+            return
+
+        if compact_sql.startswith('SELECT allowed_events, current_event FROM admins'):
+            self._one = {
+                'allowed_events': self.db.allowed_events,
+                'current_event': '活動A',
+            } if self.db.admin_exists else None
+            return
+
+        if compact_sql.startswith('SELECT DISTINCT google_sheet_name FROM event_registrations'):
+            self._all = [
+                {'google_sheet_name': sheet}
+                for sheet in sorted({row.get('google_sheet_name') for row in self.db.roster if row.get('google_sheet_name')})
+            ]
+            return
+
+        if compact_sql.startswith('SELECT DISTINCT google_sheet_name FROM event_configs'):
+            self._all = []
+            return
+
+        if compact_sql.startswith('UPDATE admins SET current_event'):
+            _sheet, allowed_events, _admin = args
+            self.db.allowed_events = allowed_events
+            self.rowcount = 1
+            return
+
+        if compact_sql.startswith('SELECT * FROM event_registrations'):
+            if self.db.fail_on_snapshot:
+                raise RuntimeError('simulated snapshot failure')
+            self._all = copy.deepcopy(self.db.roster)
+            return
+
+        if compact_sql.startswith('UPDATE csv_import_previews SET used_at=NOW() WHERE admin_username'):
+            admin, sheet = args
+            for record in self.db.previews.values():
+                if record['admin_username'] == admin and record['google_sheet_name'] == sheet and not record['used_at']:
+                    record['used_at'] = True
+                    self.rowcount += 1
+            return
+
+        if compact_sql.startswith('DELETE FROM csv_import_previews WHERE expires_at'):
+            return
+
+        if compact_sql.startswith('INSERT INTO csv_import_previews'):
+            token_hash, admin, sheet, file_sha256, valid_count, roster_count, revision, _ttl = args
+            self.db.previews[token_hash] = {
+                'admin_username': admin,
+                'google_sheet_name': sheet,
+                'file_sha256': file_sha256,
+                'valid_count': valid_count,
+                'roster_count': roster_count,
+                'roster_revision': revision,
+                'used_at': None,
+            }
+            self.rowcount = 1
+            return
+
+        if compact_sql.startswith('SELECT admin_username, google_sheet_name, file_sha256'):
+            record = self.db.previews.get(args[0])
+            self._one = copy.deepcopy(record) if record and not record['used_at'] else None
+            return
+
+        if compact_sql.startswith('UPDATE csv_import_previews SET used_at=NOW() WHERE token_hash'):
+            record = self.db.previews.get(args[0])
+            if record and not record['used_at']:
+                record['used_at'] = True
+                self.rowcount = 1
+            return
+
+        if compact_sql.startswith('DELETE FROM event_registrations'):
+            self.db.roster = []
+            self.rowcount = 1
+            return
+
+        if compact_sql.startswith('INSERT INTO event_registrations'):
+            self.connection.insert_count += 1
+            if self.db.fail_on_insert == self.connection.insert_count:
+                raise RuntimeError('simulated insert failure')
+            self.db.roster.append({
+                'id': self.connection.insert_count,
+                'admin_username': args[0],
+                'google_sheet_name': args[1],
+                'name': args[4],
+                'phone': args[5],
+                'company': args[7],
+                'status': 'pending',
+            })
+            self.rowcount = 1
+            return
+
+        raise AssertionError(f'Unexpected SQL in test: {compact_sql}')
+
+    def fetchone(self):
+        return self._one
+
+    def fetchall(self):
+        return self._all
+
+
+class FakeConnection:
+    def __init__(self, db):
+        self.db = db
+        self.statements = []
+        self.commits = 0
+        self.rollbacks = 0
+        self.closes = 0
+        self.insert_count = 0
+        self.last_insert_id = 0
+        self._snapshot = (copy.deepcopy(db.roster), copy.deepcopy(db.previews))
+
+    def cursor(self):
+        return FakeCursor(self)
+
+    def commit(self):
+        self.commits += 1
+        self._snapshot = (copy.deepcopy(self.db.roster), copy.deepcopy(self.db.previews))
+
+    def rollback(self):
+        self.rollbacks += 1
+        self.db.roster, self.db.previews = copy.deepcopy(self._snapshot)
+
+    def close(self):
+        self.closes += 1
+
+
+class CsvImportTests(unittest.TestCase):
+    def setUp(self):
+        server.app.config.update(TESTING=True, SECRET_KEY='csv-import-test-secret')
+        self.client = server.app.test_client()
+        self.log_in()
+
+    def log_in(self, username='admin'):
+        with self.client.session_transaction() as user_session:
+            user_session['admin_logged_in'] = True
+            user_session['username'] = username
+            user_session['allowed_sheets'] = ['活動A']
+            user_session['current_admin_sheet'] = '活動A'
+
+    @staticmethod
+    def upload_data(raw=VALID_CSV, token=None):
+        data = {'file': (io.BytesIO(raw), 'people.csv')}
+        if token is not None:
+            data['preview_token'] = token
+        return data
+
+    def post_import(self, db, mode='preview', raw=VALID_CSV, token=None, admin='admin', sheet='活動A'):
+        with (
+            patch.object(server, 'get_db_connection', side_effect=db.connect),
+            patch.object(server, 'ensure_core_tables'),
+            patch.object(server, 'ensure_config'),
+        ):
+            return self.client.post(
+                f'/api/sheets/import_csv?mode={mode}&admin={admin}&sheet={sheet}',
+                data=self.upload_data(raw, token),
+                content_type='multipart/form-data',
+            )
+
+    def preview(self, db, raw=VALID_CSV):
+        response = self.post_import(db, raw=raw)
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        return response.get_json()
+
+    def test_parser_normalizes_headers_and_counts_only_valid_rows(self):
+        parsed = server.parse_registration_csv(VALID_CSV)
+        self.assertEqual(parsed['total_count'], 3)
+        self.assertEqual(parsed['valid_count'], 2)
+        self.assertEqual(parsed['skipped_count'], 1)
+        self.assertEqual(parsed['rows'][0]['seat'], '12')
+        self.assertEqual(parsed['rows'][0]['special_notes'], '素食,不吃香菜')
+
+    def test_parser_accepts_spaced_headers_cp950_and_export_headers(self):
+        spaced = ' 姓名 , 手機 ,公司名稱\r\n王小明,0912345678,範例公司\r\n'.encode('cp950')
+        self.assertEqual(server.parse_registration_csv(spaced)['valid_count'], 1)
+
+        exported = (
+            '姓名,手機,公司/單位,Email,職稱,桌號/座位,報到狀態,報到時間,肖像權狀態,代理人姓名,代理人手機,備註\r\n'
+            '陳美玲,0987654321,測試科技,mei@example.com,專員,A桌,pending,,,,,輪椅席\r\n'
+        ).encode('utf-8')
+        result = server.parse_registration_csv(exported)
+        self.assertEqual(result['rows'][0]['company'], '測試科技')
+        self.assertEqual(result['rows'][0]['seat'], 'A')
+
+    def test_malformed_or_uneven_csv_is_rejected_before_database(self):
+        malformed_files = [
+            '姓名,手機,公司名稱\r\n"王小明,0912345678,公司\r\n'.encode('utf-8'),
+            '姓名,手機,公司名稱\r\n王小明,0912345678,公司,多餘欄位\r\n'.encode('utf-8'),
+            '姓名,手機,公司名稱\r\n王小明,0912345678\r\n'.encode('utf-8'),
+        ]
+        for raw in malformed_files:
+            with self.subTest(raw=raw):
+                with patch.object(server, 'get_db_connection', side_effect=AssertionError('DB must not be called')):
+                    response = self.client.post(
+                        '/api/sheets/import_csv?mode=commit&admin=admin&sheet=活動A',
+                        data=self.upload_data(raw),
+                        content_type='multipart/form-data',
+                    )
+                self.assertEqual(response.status_code, 400)
+
+    def test_csv_row_limit_is_rejected_before_database(self):
+        raw = ('姓名,手機,公司名稱\r\n' + '王小明,0912345678,公司\r\n' * 3).encode('utf-8')
+        with (
+            patch.object(server, 'MAX_CSV_ROWS', 2),
+            patch.object(server, 'get_db_connection', side_effect=AssertionError('DB must not be called')),
+        ):
+            response = self.client.post(
+                '/api/sheets/import_csv?mode=preview&admin=admin&sheet=活動A',
+                data=self.upload_data(raw), content_type='multipart/form-data',
+            )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('超過 2 筆上限', response.get_json()['message'])
+
+    def test_render_requires_session_and_admin_secrets(self):
+        source = inspect.getsource(server)
+        self.assertIn("if IS_RENDER and not SECRET_KEY:", source)
+        self.assertIn("if IS_RENDER and (not ADMIN_PASSWORD or ADMIN_PASSWORD == 'admin123'):", source)
+        self.assertIn("UPDATE admins SET password=%s WHERE password=%s", source)
+
+    def test_preview_returns_summary_and_only_stores_one_time_token(self):
+        db = FakeDatabase(roster=[roster_row(i) for i in range(1, 8)])
+        data = self.preview(db)
+        self.assertEqual(data['total_count'], 3)
+        self.assertEqual(data['valid_count'], 2)
+        self.assertEqual(data['skipped_count'], 1)
+        self.assertEqual(data['existing_count'], 7)
+        self.assertTrue(data['preview_token'])
+        self.assertEqual(len(db.previews), 1)
+        all_sql = [sql for connection in db.connections for sql, _ in connection.statements]
+        self.assertFalse(any(sql.startswith('DELETE FROM event_registrations') for sql in all_sql))
+        self.assertFalse(any(sql.startswith('INSERT INTO event_registrations') for sql in all_sql))
+
+    def test_preview_fails_closed_if_roster_snapshot_is_unavailable(self):
+        db = FakeDatabase()
+        db.fail_on_snapshot = True
+        response = self.post_import(db)
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(db.previews, {})
+
+    def test_import_requires_login_matching_admin_and_allowed_sheet(self):
+        db = FakeDatabase()
+        with self.client.session_transaction() as user_session:
+            user_session.clear()
+        with patch.object(server, 'get_db_connection', side_effect=AssertionError('DB must not be called')):
+            anonymous = self.client.post(
+                '/api/sheets/import_csv?mode=preview&admin=admin&sheet=活動A',
+                data=self.upload_data(), content_type='multipart/form-data',
+            )
+        self.assertEqual(anonymous.status_code, 401)
+
+        self.log_in()
+        with patch.object(server, 'get_db_connection', side_effect=AssertionError('DB must not be called')):
+            other_admin = self.client.post(
+                '/api/sheets/import_csv?mode=preview&admin=other&sheet=活動A',
+                data=self.upload_data(), content_type='multipart/form-data',
+            )
+        self.assertEqual(other_admin.status_code, 403)
+
+        forbidden_sheet = self.post_import(db, sheet='活動B')
+        self.assertEqual(forbidden_sheet.status_code, 403)
+        self.assertFalse(any('DELETE FROM event_registrations' in sql for sql, _ in db.connections[-1].statements))
+
+    def test_sheet_admin_routes_use_authenticated_identity(self):
+        db = FakeDatabase(roster=[roster_row(1)])
+        with (
+            patch.object(server, 'get_db_connection', side_effect=db.connect),
+            patch.object(server, 'ensure_core_tables'),
+            patch.object(server, 'ensure_config'),
+        ):
+            listed = self.client.get('/api/sheets/list?admin=other')
+            switched = self.client.post('/api/session/sheet', json={'admin': 'other', 'sheet': '活動B'})
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual(listed.get_json()['username'], 'admin')
+        self.assertEqual(switched.status_code, 200)
+        update_sql = [
+            args for connection in db.connections for sql, args in connection.statements
+            if sql.startswith('UPDATE admins SET current_event')
+        ]
+        self.assertEqual(update_sql[-1][2], 'admin')
+
+        with self.client.session_transaction() as user_session:
+            user_session.clear()
+        with patch.object(server, 'get_db_connection', side_effect=AssertionError('DB must not be called')):
+            anonymous_list = self.client.get('/api/sheets/list')
+            anonymous_switch = self.client.post('/api/session/sheet', json={'sheet': '活動A'})
+        self.assertEqual(anonymous_list.status_code, 401)
+        self.assertEqual(anonymous_switch.status_code, 401)
+
+    def test_all_roster_mutators_take_the_same_event_lock(self):
+        for function in [
+            server.api_registration_add,
+            server.api_checkin,
+            server.import_csv_api,
+            server.delete_sheet_data_api,
+        ]:
+            with self.subTest(function=function.__name__):
+                body = inspect.getsource(function)
+                self.assertIn('lock_event_mutations(cur, admin, sheet)', body)
+
+        checkin_body = inspect.getsource(server.api_checkin)
+        self.assertNotIn('WHERE id=%s LIMIT 1', checkin_body)
+        self.assertIn('FOR UPDATE', checkin_body)
+        self.assertIn('cur.rowcount != 1', checkin_body)
+
+    def test_invalid_headers_and_zero_valid_rows_never_connect_to_database(self):
+        invalid_files = [
+            b'foo,bar\r\n1,2\r\n',
+            '姓名,手機,公司名稱\r\n,,\r\n'.encode('utf-8'),
+        ]
+        for raw in invalid_files:
+            with self.subTest(raw=raw):
+                with patch.object(server, 'get_db_connection', side_effect=AssertionError('DB must not be called')):
+                    response = self.client.post(
+                        '/api/sheets/import_csv?mode=commit&admin=admin&sheet=活動A',
+                        data=self.upload_data(raw), content_type='multipart/form-data',
+                    )
+                self.assertEqual(response.status_code, 400)
+
+    def test_commit_replaces_roster_and_token_cannot_be_replayed(self):
+        db = FakeDatabase(roster=[roster_row(1), roster_row(2)])
+        preview = self.preview(db)
+        response = self.post_import(db, mode='commit', token=preview['preview_token'])
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        self.assertEqual(response.get_json()['inserted_count'], 2)
+        self.assertEqual([row['name'] for row in db.roster], ['王小明', '陳美玲'])
+
+        replay = self.post_import(db, mode='commit', token=preview['preview_token'])
+        self.assertEqual(replay.status_code, 409)
+        self.assertEqual([row['name'] for row in db.roster], ['王小明', '陳美玲'])
+
+    def test_changed_file_or_target_is_rejected_without_deleting_roster(self):
+        db = FakeDatabase(roster=[roster_row(1)])
+        preview = self.preview(db)
+        original = copy.deepcopy(db.roster)
+        changed = VALID_CSV.replace('王小明'.encode(), '王大明'.encode())
+        response = self.post_import(db, mode='commit', raw=changed, token=preview['preview_token'])
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(db.roster, original)
+
+    def test_roster_change_after_preview_requires_a_new_preview(self):
+        db = FakeDatabase(roster=[roster_row(1)])
+        preview = self.preview(db)
+        db.roster[0]['status'] = 'checked_in'
+        response = self.post_import(db, mode='commit', token=preview['preview_token'])
+        self.assertEqual(response.status_code, 409)
+        self.assertIn('名單在預覽後已被更新', response.get_json()['message'])
+        self.assertEqual(db.roster[0]['status'], 'checked_in')
+
+    def test_database_error_rolls_back_roster_and_preview_token(self):
+        original = [roster_row(1)]
+        db = FakeDatabase(roster=original)
+        preview = self.preview(db)
+        db.fail_on_insert = 2
+        response = self.post_import(db, mode='commit', token=preview['preview_token'])
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(db.roster, original)
+        token_hash = server.csv_preview_token_hash(preview['preview_token'])
+        self.assertFalse(db.previews[token_hash]['used_at'])
+        self.assertEqual(db.connections[-1].rollbacks, 1)
+
+    def test_template_is_utf8_bom_and_parser_compatible(self):
+        response = self.client.get('/api/sheets/import_csv/template')
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data.startswith(b'\xef\xbb\xbf'))
+        self.assertIn('text/csv', response.content_type)
+        self.assertIn('attachment', response.headers['Content-Disposition'])
+        header = response.data + '王小明,0912345678,,範例公司,,,,,\r\n'.encode('utf-8')
+        self.assertEqual(server.parse_registration_csv(header)['valid_count'], 1)
+
+    def test_utf16_and_oversized_files_are_rejected_before_database(self):
+        invalid_files = [
+            ('姓名,手機\r\n王小明,0912345678\r\n'.encode('utf-16'), 400),
+            (b'a' * (server.MAX_CSV_BYTES + 1), 413),
+        ]
+        for raw, expected_status in invalid_files:
+            with self.subTest(expected_status=expected_status):
+                with patch.object(server, 'get_db_connection', side_effect=AssertionError('DB must not be called')):
+                    response = self.client.post(
+                        '/api/sheets/import_csv?mode=preview&admin=admin&sheet=活動A',
+                        data=self.upload_data(raw), content_type='multipart/form-data',
+                    )
+                self.assertEqual(response.status_code, expected_status)
+
+
+if __name__ == '__main__':
+    unittest.main()

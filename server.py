@@ -3,8 +3,11 @@ import re
 import csv
 import io
 import json
+import hashlib
+import hmac
+import secrets
 from datetime import datetime
-from urllib.parse import urlparse, quote
+from urllib.parse import urlparse, quote, unquote
 
 from flask import Flask, request, jsonify, session, send_from_directory, Response
 from flask_cors import CORS
@@ -12,11 +15,19 @@ import pymysql
 from pymysql.cursors import DictCursor
 
 app = Flask(__name__, static_folder='.', static_url_path='')
-app.secret_key = os.getenv('SECRET_KEY', 'smart-ark-dev-secret')
+IS_RENDER = bool(os.getenv('RENDER') or os.getenv('RENDER_SERVICE_ID'))
+SECRET_KEY = os.getenv('SECRET_KEY')
+ADMIN_PASSWORD = os.getenv('ADMIN_PASSWORD')
+if IS_RENDER and not SECRET_KEY:
+    raise RuntimeError('Render 部署缺少必要環境變數 SECRET_KEY')
+if IS_RENDER and (not ADMIN_PASSWORD or ADMIN_PASSWORD == 'admin123'):
+    raise RuntimeError('Render 部署必須設定非預設的 ADMIN_PASSWORD')
+app.secret_key = SECRET_KEY or 'smart-ark-dev-secret'
 CORS(app, supports_credentials=True)
 
 DEFAULT_ADMIN = os.getenv('ADMIN_USERNAME', 'admin')
-DEFAULT_PASSWORD = os.getenv('ADMIN_PASSWORD', 'admin123')
+DEFAULT_PASSWORD = ADMIN_PASSWORD or 'admin123'
+ROTATE_DEFAULT_ADMIN_PASSWORD = IS_RENDER and bool(ADMIN_PASSWORD)
 DEFAULT_SHEET = os.getenv('ADMIN_DEFAULT_EVENT') or os.getenv('ADMIN_DEFAULT_EVENTS') or '活動報到名單'
 CHECKED_STATUSES = ('checked_in', '已報到', '替代', 'done')
 
@@ -31,9 +42,9 @@ def db_params():
         return dict(
             host=u.hostname,
             port=u.port or 3306,
-            user=u.username,
-            password=u.password,
-            database=(u.path or '').lstrip('/') or os.getenv('MYSQLDATABASE'),
+            user=unquote(u.username or ''),
+            password=unquote(u.password or ''),
+            database=unquote((u.path or '').lstrip('/')) or os.getenv('MYSQLDATABASE'),
             charset='utf8mb4',
             cursorclass=DictCursor,
             autocommit=False,
@@ -174,6 +185,25 @@ def ensure_core_tables(conn):
 
         cur.execute(
             """
+            CREATE TABLE IF NOT EXISTS csv_import_previews (
+                token_hash CHAR(64) PRIMARY KEY,
+                admin_username VARCHAR(120) NOT NULL,
+                google_sheet_name VARCHAR(255) NOT NULL,
+                file_sha256 CHAR(64) NOT NULL,
+                valid_count INT NOT NULL,
+                roster_count INT NOT NULL,
+                roster_revision CHAR(64) NOT NULL,
+                expires_at DATETIME NOT NULL,
+                used_at DATETIME NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                KEY idx_csv_preview_target (admin_username, google_sheet_name),
+                KEY idx_csv_preview_expiry (expires_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """
+        )
+
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS agenda_items (
                 id INT AUTO_INCREMENT PRIMARY KEY,
                 admin_username VARCHAR(120) NOT NULL DEFAULT 'admin',
@@ -267,6 +297,11 @@ def ensure_core_tables(conn):
                 "INSERT INTO admins (username,password,allowed_events,current_event) VALUES (%s,%s,%s,%s)",
                 (DEFAULT_ADMIN, DEFAULT_PASSWORD, DEFAULT_SHEET, DEFAULT_SHEET),
             )
+        if ROTATE_DEFAULT_ADMIN_PASSWORD:
+            cur.execute(
+                "UPDATE admins SET password=%s WHERE password=%s",
+                (DEFAULT_PASSWORD, 'admin123'),
+            )
     conn.commit()
 
 
@@ -322,10 +357,94 @@ def json_dumps(value):
     return json.dumps(value if value is not None else [], ensure_ascii=False)
 
 
+MAX_CSV_BYTES = 5 * 1024 * 1024
+MAX_CSV_ROWS = 50000
+CSV_PREVIEW_TOKEN_TTL_SECONDS = 15 * 60
+REGISTRATION_FIELD_ALIASES = {
+    'name': ['姓名', 'name', 'Name', '名字', '貴賓姓名'],
+    'phone': ['手機', '電話', 'phone', 'Phone', '行動電話', '手機號碼'],
+    'email': ['Email', 'email', 'E-mail', '信箱', '電子郵件'],
+    'company': ['公司', '公司名稱', '公司/單位', '服務單位', '單位', 'company', 'Company'],
+    'job_title': ['職稱', 'title', 'job_title', '職位', 'position', 'Position'],
+    'region': ['地區', '區域', 'region', 'Region'],
+    'training_level': ['職階', '層級', 'training_level', 'level'],
+    'seat': ['桌號', '桌號/座位', '座位', '桌次', 'seat', 'Seat', 'seating_chart'],
+    'special_notes': ['備註', 'notes', 'note', 'Remarks'],
+}
+REGISTRATION_TEMPLATE_HEADERS = ['姓名', '手機', 'Email', '公司名稱', '職稱', '地區', '職階', '桌號', '備註']
+REGISTRATION_REQUIRED_FIELDS = {'name', 'phone', 'company'}
+
+
+def normalize_csv_header(value):
+    return str(value or '').lstrip('\ufeff').strip().casefold()
+
+
+REGISTRATION_ALIAS_TO_FIELD = {
+    normalize_csv_header(alias): field
+    for field, aliases in REGISTRATION_FIELD_ALIASES.items()
+    for alias in aliases
+}
+
+
+def normalize_csv_row(row):
+    normalized = {}
+    for key, value in (row or {}).items():
+        header = normalize_csv_header(key)
+        if header and header not in normalized:
+            normalized[header] = value
+    return normalized
+
+
+def create_csv_preview_token():
+    return secrets.token_urlsafe(32)
+
+
+def csv_preview_token_hash(token):
+    return hashlib.sha256(clean_text(token).encode('utf-8')).hexdigest()
+
+
+def csv_file_hash(raw):
+    return hashlib.sha256(raw).hexdigest()
+
+
+def csv_roster_revision(rows):
+    canonical = json.dumps(
+        rows or [],
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(',', ':'),
+        default=str,
+    ).encode('utf-8')
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def load_csv_roster_snapshot(cur, admin, sheet, for_update=False):
+    sql = """
+        SELECT * FROM event_registrations
+        WHERE admin_username=%s AND google_sheet_name=%s
+        ORDER BY id
+    """
+    if for_update:
+        sql += " FOR UPDATE"
+    cur.execute(sql, (admin, sheet))
+    rows = cur.fetchall() or []
+    return len(rows), csv_roster_revision(rows)
+
+
+def lock_event_mutations(cur, admin, sheet):
+    cur.execute(
+        "SELECT id FROM event_configs WHERE admin_username=%s AND google_sheet_name=%s FOR UPDATE",
+        (admin, sheet),
+    )
+    if not cur.fetchone():
+        raise RuntimeError('找不到活動場次設定，請重新整理後再試')
+
+
 def pick(row, keys):
     for k in keys:
-        if k in row and str(row[k]).strip():
-            return str(row[k]).strip()
+        value = row.get(normalize_csv_header(k))
+        if value is not None and str(value).strip():
+            return str(value).strip()
     return ''
 
 
@@ -398,17 +517,100 @@ def status_checked(status):
 
 
 def normalize_registration(row):
+    normalized = normalize_csv_row(row)
     return {
-        'name': pick(row, ['姓名', 'name', 'Name', '名字', '貴賓姓名']),
-        'phone': pick(row, ['手機', '電話', 'phone', 'Phone', '行動電話', '手機號碼']),
-        'email': pick(row, ['Email', 'email', 'E-mail', '信箱', '電子郵件']),
-        'company': pick(row, ['公司', '公司名稱', '服務單位', '單位', 'company', 'Company']),
-        'job_title': pick(row, ['職稱', 'title', 'job_title', '職位', 'position', 'Position']),
-        'region': pick(row, ['地區', '區域', 'region', 'Region']),
-        'training_level': pick(row, ['職階', '層級', 'training_level', 'level']),
-        'seat': normalize_table_label(pick(row, ['桌號', '座位', '桌次', 'seat', 'Seat', 'seating_chart'])),
-        'special_notes': pick(row, ['備註', 'notes', 'note', 'Remarks']),
+        'name': pick(normalized, REGISTRATION_FIELD_ALIASES['name']),
+        'phone': pick(normalized, REGISTRATION_FIELD_ALIASES['phone']),
+        'email': pick(normalized, REGISTRATION_FIELD_ALIASES['email']),
+        'company': pick(normalized, REGISTRATION_FIELD_ALIASES['company']),
+        'job_title': pick(normalized, REGISTRATION_FIELD_ALIASES['job_title']),
+        'region': pick(normalized, REGISTRATION_FIELD_ALIASES['region']),
+        'training_level': pick(normalized, REGISTRATION_FIELD_ALIASES['training_level']),
+        'seat': normalize_table_label(pick(normalized, REGISTRATION_FIELD_ALIASES['seat'])),
+        'special_notes': pick(normalized, REGISTRATION_FIELD_ALIASES['special_notes']),
         'raw_data': json_dumps(row),
+    }
+
+
+def decode_registration_csv(raw):
+    if not raw:
+        raise ValueError('CSV 檔案是空的')
+    if b'\x00' in raw:
+        raise ValueError('CSV 看起來是 UTF-16 格式，請在 Excel 另存為「CSV UTF-8」')
+
+    last_error = None
+    for encoding in ['utf-8-sig', 'utf-8', 'cp950', 'big5', 'big5hkscs']:
+        try:
+            return raw.decode(encoding), encoding
+        except UnicodeDecodeError as err:
+            last_error = err
+    raise ValueError(f'CSV 編碼解析失敗，請另存為「CSV UTF-8」：{last_error}')
+
+
+def parse_registration_csv(raw):
+    text, encoding = decode_registration_csv(raw)
+    sample = text[:4096]
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=',;\t')
+    except csv.Error:
+        dialect = csv.excel
+
+    try:
+        extra_columns_key = '__extra_columns__'
+        reader = csv.DictReader(
+            io.StringIO(text, newline=''),
+            dialect=dialect,
+            restkey=extra_columns_key,
+            restval=None,
+            strict=True,
+        )
+        fieldnames = [str(name or '').lstrip('\ufeff').strip() for name in (reader.fieldnames or [])]
+        if not fieldnames or not any(fieldnames):
+            raise ValueError('CSV 沒有標題列，請確認第一列是欄位名稱')
+
+        recognized_columns = [
+            REGISTRATION_ALIAS_TO_FIELD[normalize_csv_header(name)]
+            for name in fieldnames
+            if normalize_csv_header(name) in REGISTRATION_ALIAS_TO_FIELD
+        ]
+        recognized_fields = set(recognized_columns)
+        if not recognized_fields:
+            raise ValueError('CSV 欄名無法辨識，請下載並使用系統提供的 CSV 範本')
+        duplicate_fields = sorted({field for field in recognized_columns if recognized_columns.count(field) > 1})
+        if duplicate_fields:
+            raise ValueError('CSV 有重複用途的欄位，請使用系統提供的 CSV 範本')
+        if not recognized_fields.intersection(REGISTRATION_REQUIRED_FIELDS):
+            raise ValueError('CSV 至少需要「姓名」、「手機」或「公司名稱」其中一個欄位')
+
+        valid_rows = []
+        total_count = 0
+        for row_number, row in enumerate(reader, start=1):
+            if row_number > MAX_CSV_ROWS:
+                raise ValueError(f'CSV 超過 {MAX_CSV_ROWS:,} 筆上限，請拆成較小的檔案')
+            if row.get(extra_columns_key) is not None:
+                raise ValueError(f'CSV 第 {reader.line_num} 列欄位數超過表頭')
+            if any(value is None for key, value in row.items() if key != extra_columns_key):
+                raise ValueError(f'CSV 第 {reader.line_num} 列欄位數少於表頭')
+            row.pop(extra_columns_key, None)
+            total_count += 1
+            normalized_row = normalize_registration(row)
+            if normalized_row['name'] or normalized_row['phone'] or normalized_row['company']:
+                valid_rows.append(normalized_row)
+    except csv.Error as err:
+        raise ValueError(f'CSV 格式解析失敗：{err}') from err
+
+    skipped_count = total_count - len(valid_rows)
+    if not valid_rows:
+        raise ValueError('CSV 沒有可匯入的有效資料，原有名單未變更')
+
+    return {
+        'encoding': encoding,
+        'headers': fieldnames,
+        'recognized_fields': sorted(recognized_fields),
+        'rows': valid_rows,
+        'total_count': total_count,
+        'valid_count': len(valid_rows),
+        'skipped_count': skipped_count,
     }
 
 
@@ -763,7 +965,9 @@ def current_sheet():
 
 @app.route('/api/sheets/list')
 def sheets_list():
-    admin = clean_text(request.args.get('admin')) or session.get('username') or DEFAULT_ADMIN
+    admin = clean_text(session.get('username'))
+    if not session.get('admin_logged_in') or not admin:
+        return jsonify(success=False, message='請先登入管理員後台'), 401
     conn = None
     try:
         conn = get_db_connection()
@@ -781,7 +985,13 @@ def sheets_list():
             if s and s not in sheets:
                 sheets.append(s)
         current = row.get('current_event') or session.get('current_admin_sheet') or (sheets[0] if sheets else DEFAULT_SHEET)
-        return jsonify(success=True, sheets=sheets or [DEFAULT_SHEET], allowed_sheets=sheets or [DEFAULT_SHEET], current_sheet=current)
+        return jsonify(
+            success=True,
+            username=admin,
+            sheets=sheets or [DEFAULT_SHEET],
+            allowed_sheets=sheets or [DEFAULT_SHEET],
+            current_sheet=current,
+        )
     except Exception as e:
         return jsonify(success=False, message=str(e), sheets=[]), 500
     finally:
@@ -794,23 +1004,24 @@ def session_sheet():
     conn = None
     try:
         data = get_payload() or {}
-        admin = clean_text(data.get('admin')) or session.get('username') or DEFAULT_ADMIN
+        admin = clean_text(session.get('username'))
+        if not session.get('admin_logged_in') or not admin:
+            return jsonify(success=False, message='請先登入管理員後台'), 401
         sheet = clean_text(data.get('sheet') or data.get('google_sheet_name') or data.get('event_key')) or DEFAULT_SHEET
         conn = get_db_connection()
         ensure_core_tables(conn)
-        ensure_config(conn, admin, sheet)
         with conn.cursor() as cur:
             cur.execute("SELECT allowed_events FROM admins WHERE username=%s LIMIT 1", (admin,))
             row = cur.fetchone()
-            if row:
-                allowed = [x.strip() for x in (row.get('allowed_events') or '').split(',') if x.strip()]
-                if sheet not in allowed:
-                    allowed.append(sheet)
-                cur.execute("UPDATE admins SET current_event=%s, allowed_events=%s WHERE username=%s", (sheet, ','.join(allowed), admin))
-            else:
-                cur.execute("INSERT INTO admins (username,password,allowed_events,current_event) VALUES (%s,%s,%s,%s)", (admin, DEFAULT_PASSWORD, sheet, sheet))
+            if not row:
+                return jsonify(success=False, message='管理員帳號不存在，請重新登入'), 403
+            allowed = [x.strip() for x in (row.get('allowed_events') or '').split(',') if x.strip()]
+            if sheet not in allowed:
+                allowed.append(sheet)
+            cur.execute("UPDATE admins SET current_event=%s, allowed_events=%s WHERE username=%s", (sheet, ','.join(allowed), admin))
+        ensure_config(conn, admin, sheet)
         conn.commit()
-        session['username'] = admin
+        session['allowed_sheets'] = allowed
         session['current_admin_sheet'] = sheet
         return jsonify(success=True, current_sheet=sheet, sheet=sheet)
     except Exception as e:
@@ -1091,6 +1302,7 @@ def api_registration_add():
         ensure_core_tables(conn)
         ensure_config(conn, admin, sheet)
         with conn.cursor() as cur:
+            lock_event_mutations(cur, admin, sheet)
             # 具名排除 id，全面精準寫入
             cur.execute(
                 """
@@ -1145,12 +1357,15 @@ def api_checkin(rid):
         now = datetime.now()
         conn = get_db_connection()
         ensure_core_tables(conn)
+        ensure_config(conn, admin, sheet)
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM event_registrations WHERE id=%s AND admin_username=%s AND google_sheet_name=%s LIMIT 1", (rid, admin, sheet))
+            lock_event_mutations(cur, admin, sheet)
+            cur.execute(
+                "SELECT * FROM event_registrations "
+                "WHERE id=%s AND admin_username=%s AND google_sheet_name=%s LIMIT 1 FOR UPDATE",
+                (rid, admin, sheet),
+            )
             old = cur.fetchone()
-            if not old:
-                cur.execute("SELECT * FROM event_registrations WHERE id=%s LIMIT 1", (rid,))
-                old = cur.fetchone()
             if not old:
                 return jsonify(success=False, message='找不到報到資料'), 404
             cur.execute(
@@ -1165,7 +1380,7 @@ def api_checkin(rid):
                     portrait_consent=%s,
                     portrait_consent_status=%s,
                     portrait_consent_time=%s
-                WHERE id=%s
+                WHERE id=%s AND admin_username=%s AND google_sheet_name=%s
                 """,
                 (
                     status,
@@ -1177,10 +1392,17 @@ def api_checkin(rid):
                     1 if portrait_bool else 0,
                     portrait_status,
                     now,
-                    rid,
+                    rid, admin, sheet,
                 ),
             )
-            cur.execute("SELECT * FROM event_registrations WHERE id=%s", (rid,))
+            if cur.rowcount != 1:
+                conn.rollback()
+                return jsonify(success=False, message='報到資料已變更，請重新搜尋'), 409
+            cur.execute(
+                "SELECT * FROM event_registrations "
+                "WHERE id=%s AND admin_username=%s AND google_sheet_name=%s",
+                (rid, admin, sheet),
+            )
             updated = public_user(cur.fetchone())
         conn.commit()
         return jsonify(success=True, data=updated)
@@ -1207,43 +1429,172 @@ def api_search_query_alias():
 # ============================================================
 # CSV import / export / delete
 # ============================================================
+@app.route('/api/sheets/import_csv/template', methods=['GET'])
+def import_csv_template_api():
+    output = io.StringIO(newline='')
+    csv.writer(output, lineterminator='\r\n').writerow(REGISTRATION_TEMPLATE_HEADERS)
+    data = ('\ufeff' + output.getvalue()).encode('utf-8')
+    return Response(
+        data,
+        content_type='text/csv; charset=utf-8',
+        headers={'Content-Disposition': f"attachment; filename*=UTF-8''{quote('報到名單匯入範本.csv')}"},
+    )
+
+
 @app.route('/api/sheets/import_csv', methods=['POST'])
 def import_csv_api():
-    admin, sheet = q_event()
+    requested_admin, sheet = q_event()
     conn = None
     try:
+        mode = clean_text(request.args.get('mode') or request.form.get('mode') or 'preview').lower()
+        if mode not in ['preview', 'commit']:
+            return jsonify(success=False, message='不支援的 CSV 匯入模式'), 400
+
+        session_username = clean_text(session.get('username'))
+        if not session.get('admin_logged_in') or not session_username:
+            return jsonify(success=False, message='請先登入管理員後台再匯入名單'), 401
+        if requested_admin != session_username:
+            return jsonify(success=False, message='你沒有權限操作這個管理員的場次'), 403
+        admin = session_username
+
         upload = request.files.get('file') or request.files.get('csv') or request.files.get('upload')
         if not upload:
             return jsonify(success=False, message='找不到 CSV 檔案'), 400
-        raw = upload.read()
-        text = None
-        last_error = None
-        for enc_name in ['utf-8-sig', 'utf-8', 'cp950', 'big5', 'big5hkscs', 'latin1']:
-            try:
-                text = raw.decode(enc_name)
-                break
-            except Exception as err:
-                last_error = err
-        if text is None:
-            return jsonify(success=False, message=f'CSV 編碼解析失敗：{last_error}'), 400
-        sample = text[:4096]
+
+        raw = upload.stream.read(MAX_CSV_BYTES + 1)
+        if len(raw) > MAX_CSV_BYTES:
+            return jsonify(success=False, message='CSV 檔案超過 5 MB 上限'), 413
+
         try:
-            dialect = csv.Sniffer().sniff(sample)
-        except Exception:
-            dialect = csv.excel
-        reader = csv.DictReader(io.StringIO(text), dialect=dialect)
-        if not reader.fieldnames:
-            return jsonify(success=False, message='CSV 沒有標題列，請確認第一列是欄位名稱'), 400
-        rows = [normalize_registration(r) for r in reader]
+            parsed = parse_registration_csv(raw)
+        except ValueError as err:
+            return jsonify(success=False, message=str(err)), 400
+
         conn = get_db_connection()
         ensure_core_tables(conn)
-        ensure_config(conn, admin, sheet)
         with conn.cursor() as cur:
+            cur.execute("SELECT allowed_events FROM admins WHERE username=%s LIMIT 1", (session_username,))
+            admin_row = cur.fetchone()
+        if not admin_row:
+            return jsonify(success=False, message='管理員帳號不存在，請重新登入'), 403
+        allowed_sheets = [
+            value.strip()
+            for value in (admin_row.get('allowed_events') or '').split(',')
+            if value.strip()
+        ] or [DEFAULT_SHEET]
+        if sheet not in allowed_sheets:
+            return jsonify(success=False, message='你沒有權限操作這個場次'), 403
+        ensure_config(conn, admin, sheet)
+
+        if mode == 'preview':
+            preview_token = create_csv_preview_token()
+            with conn.cursor() as cur:
+                existing_count, roster_revision = load_csv_roster_snapshot(cur, admin, sheet)
+                cur.execute(
+                    "UPDATE csv_import_previews SET used_at=NOW() "
+                    "WHERE admin_username=%s AND google_sheet_name=%s AND used_at IS NULL",
+                    (admin, sheet),
+                )
+                cur.execute(
+                    "DELETE FROM csv_import_previews "
+                    "WHERE expires_at < DATE_SUB(NOW(), INTERVAL 1 DAY) "
+                    "OR used_at < DATE_SUB(NOW(), INTERVAL 1 DAY)"
+                )
+                cur.execute(
+                    """
+                    INSERT INTO csv_import_previews
+                    (token_hash, admin_username, google_sheet_name, file_sha256, valid_count,
+                     roster_count, roster_revision, expires_at)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,DATE_ADD(NOW(), INTERVAL %s SECOND))
+                    """,
+                    (
+                        csv_preview_token_hash(preview_token), admin, sheet, csv_file_hash(raw),
+                        parsed['valid_count'], existing_count, roster_revision,
+                        CSV_PREVIEW_TOKEN_TTL_SECONDS,
+                    ),
+                )
+            conn.commit()
+
+            preview_rows = [
+                {
+                    'name': row['name'],
+                    'phone': row['phone'],
+                    'email': row['email'],
+                    'company': row['company'],
+                    'job_title': row['job_title'],
+                    'seat': row['seat'],
+                    'special_notes': row['special_notes'],
+                }
+                for row in parsed['rows'][:10]
+            ]
+            return jsonify(
+                success=True,
+                mode='preview',
+                message=f"CSV 驗證完成：可匯入 {parsed['valid_count']} 筆",
+                target={'admin': admin, 'sheet': sheet},
+                filename=upload.filename or '',
+                total_count=parsed['total_count'],
+                valid_count=parsed['valid_count'],
+                skipped_count=parsed['skipped_count'],
+                existing_count=existing_count,
+                detected_encoding=parsed['encoding'],
+                headers=parsed['headers'],
+                recognized_fields=parsed['recognized_fields'],
+                rows=preview_rows,
+                preview_token=preview_token,
+            )
+
+        preview_token = clean_text(request.form.get('preview_token'))
+        if len(preview_token) < 32 or len(preview_token) > 200:
+            return jsonify(success=False, message='CSV 預覽憑證無效，請重新預覽'), 409
+
+        rows = parsed['rows']
+        inserted_count = 0
+        with conn.cursor() as cur:
+            lock_event_mutations(cur, admin, sheet)
+            cur.execute(
+                """
+                SELECT admin_username, google_sheet_name, file_sha256, valid_count,
+                       roster_count, roster_revision
+                FROM csv_import_previews
+                WHERE token_hash=%s AND used_at IS NULL AND expires_at >= NOW()
+                FOR UPDATE
+                """,
+                (csv_preview_token_hash(preview_token),),
+            )
+            preview = cur.fetchone()
+            if not preview:
+                conn.rollback()
+                return jsonify(success=False, message='CSV 預覽已失效或已使用，請重新預覽'), 409
+
+            preview_matches = (
+                preview.get('admin_username') == admin
+                and preview.get('google_sheet_name') == sheet
+                and int(preview.get('valid_count') or -1) == parsed['valid_count']
+                and hmac.compare_digest(str(preview.get('file_sha256') or ''), csv_file_hash(raw))
+            )
+            if not preview_matches:
+                conn.rollback()
+                return jsonify(success=False, message='CSV 檔案或目標場次已變更，請重新預覽'), 409
+
+            current_count, current_revision = load_csv_roster_snapshot(cur, admin, sheet, for_update=True)
+            if (
+                int(preview.get('roster_count') or 0) != current_count
+                or not hmac.compare_digest(str(preview.get('roster_revision') or ''), current_revision)
+            ):
+                conn.rollback()
+                return jsonify(success=False, message='名單在預覽後已被更新，請重新預覽再匯入'), 409
+
+            cur.execute(
+                "UPDATE csv_import_previews SET used_at=NOW() WHERE token_hash=%s AND used_at IS NULL",
+                (csv_preview_token_hash(preview_token),),
+            )
+            if cur.rowcount != 1:
+                conn.rollback()
+                return jsonify(success=False, message='CSV 預覽已失效或已使用，請重新預覽'), 409
+
             cur.execute("DELETE FROM event_registrations WHERE admin_username=%s AND google_sheet_name=%s", (admin, sheet))
             for r in rows:
-                if not (r['name'] or r['phone'] or r['company']):
-                    continue
-                # 完全避免在具名 INSERT 欄位中放入 id 欄位名，徹底解決 1054 錯誤
                 cur.execute(
                     """
                     INSERT INTO event_registrations
@@ -1256,8 +1607,18 @@ def import_csv_api():
                         r['region'], r['training_level'], r['seat'], r['seat'], r['special_notes'], r['special_notes'], r['raw_data'],
                     ),
                 )
+                inserted_count += 1
         conn.commit()
-        return jsonify(success=True, message=f'CSV 匯入完成：{len(rows)} 筆', count=len(rows))
+        return jsonify(
+            success=True,
+            mode='commit',
+            message=f'CSV 匯入完成：已寫入 {inserted_count} 筆，略過 {parsed["skipped_count"]} 筆',
+            count=inserted_count,
+            inserted_count=inserted_count,
+            total_count=parsed['total_count'],
+            valid_count=parsed['valid_count'],
+            skipped_count=parsed['skipped_count'],
+        )
     except Exception as e:
         if conn:
             conn.rollback()
@@ -1269,12 +1630,29 @@ def import_csv_api():
 
 @app.route('/api/sheets/delete_data', methods=['DELETE', 'POST'])
 def delete_sheet_data_api():
-    admin, sheet = q_event()
+    requested_admin, sheet = q_event()
     conn = None
     try:
+        admin = clean_text(session.get('username'))
+        if not session.get('admin_logged_in') or not admin:
+            return jsonify(success=False, message='請先登入管理員後台'), 401
+        if requested_admin != admin:
+            return jsonify(success=False, message='你沒有權限操作這個管理員的場次'), 403
         conn = get_db_connection()
         ensure_core_tables(conn)
         with conn.cursor() as cur:
+            cur.execute("SELECT allowed_events FROM admins WHERE username=%s LIMIT 1", (admin,))
+            admin_row = cur.fetchone()
+        allowed_sheets = [
+            value.strip()
+            for value in ((admin_row or {}).get('allowed_events') or '').split(',')
+            if value.strip()
+        ] or [DEFAULT_SHEET]
+        if sheet not in allowed_sheets:
+            return jsonify(success=False, message='你沒有權限操作這個場次'), 403
+        ensure_config(conn, admin, sheet)
+        with conn.cursor() as cur:
+            lock_event_mutations(cur, admin, sheet)
             cur.execute("DELETE FROM event_registrations WHERE admin_username=%s AND google_sheet_name=%s", (admin, sheet))
         conn.commit()
         return jsonify(success=True, message=f'已成功清空場次「{sheet}」的所有旅客名單資料')
@@ -1306,9 +1684,6 @@ def export_csv_api():
             rows = [public_user(r) for r in cur.fetchall()]
         output = io.StringIO()
         writer = csv.writer(output)
-        writer.writerow(['表單名稱', sheet])
-        writer.writerow(['產生時間', datetime.now().strftime('%Y-%m-%d %H:%M:%S')])
-        writer.writerow([])
         writer.writerow(['姓名', '手機', '公司/單位', 'Email', '職稱', '桌號/座位', '報到狀態', '報到時間', '肖像權狀態', '代理人姓名', '代理人手機', '備註'])
         for r in rows:
             writer.writerow([
@@ -1320,7 +1695,7 @@ def export_csv_api():
         filename = re.sub(r'[\\/:*?"<>|\s]+', '_', sheet).strip('_') or 'registrations'
         return Response(
             data,
-            mimetype='text/csv; charset=utf-8',
+            content_type='text/csv; charset=utf-8',
             headers={'Content-Disposition': f"attachment; filename*=UTF-8''{quote(filename)}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"},
         )
     except Exception as e:
