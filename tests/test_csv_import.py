@@ -1,6 +1,7 @@
 import copy
 import inspect
 import io
+from pathlib import Path
 import unittest
 import zipfile
 from datetime import date
@@ -586,6 +587,33 @@ class CsvImportTests(unittest.TestCase):
                         data=self.upload_data(raw), content_type='multipart/form-data',
                     )
                 self.assertEqual(response.status_code, expected_status)
+
+    def test_frontend_initializes_config_and_identity_before_automatic_checkin(self):
+        frontend = Path(server.app.root_path, '活動報到系統.html').read_text(encoding='utf-8')
+        self.assertIn('async function loadSystemConfig()', frontend)
+        self.assertIn('await loadSystemConfig();', frontend)
+        self.assertIn("if (systemConfig.show_meal_options === false)", frontend)
+
+        render_start = frontend.index('async function renderMealOptions()')
+        auto_checkin = frontend.index("await submitCheckin('不需要')", render_start)
+        self.assertLess(frontend.index('window.isOriginal = true;', render_start), auto_checkin)
+        self.assertIn("const isOriginal = window.isOriginal !== false;", frontend)
+        self.assertIn("const proxyNameEl = document.getElementById('proxyName');", frontend)
+        self.assertIn('onsubmit="event.preventDefault(); handleAction();"', frontend)
+        self.assertIn('<button type="submit" class="ck-btn"', frontend)
+
+    def test_config_defaults_to_showing_meal_options(self):
+        config = server.serialize_config(
+            {'admin_username': 'admin', 'google_sheet_name': '活動A'},
+            admin='admin', sheet='活動A',
+        )
+        self.assertIs(config['show_meal_options'], True)
+
+        hidden = server.serialize_config(
+            {'admin_username': 'admin', 'google_sheet_name': '活動A', 'show_meal_options': False},
+            admin='admin', sheet='活動A',
+        )
+        self.assertIs(hidden['show_meal_options'], False)
 
 
 if __name__ == '__main__':

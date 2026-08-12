@@ -1053,6 +1053,8 @@ def serialize_config(row, conn=None, admin=None, sheet=None):
     extra = json_loads(cfg.get('event_config'), {})
     if isinstance(extra, dict):
         cfg.update({k: v for k, v in extra.items() if k not in cfg or cfg.get(k) in [None, '']})
+    if cfg.get('show_meal_options') is None:
+        cfg['show_meal_options'] = True
     cfg['google_sheet_name'] = cfg.get('google_sheet_name') or sheet or DEFAULT_SHEET
     cfg['admin_username'] = cfg.get('admin_username') or admin or DEFAULT_ADMIN
     cfg['event_title'] = cfg.get('event_title') or cfg.get('exp_event_title') or cfg['google_sheet_name']

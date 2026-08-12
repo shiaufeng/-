@@ -137,11 +137,11 @@
 
     <div id="actionState" class="state-hidden">
       <button class="btn-back-nav" onclick="setAppState('methodSelection')">← 重新選擇方式</button>
-      <div class="form-card cyber-card">
+      <form class="form-card cyber-card" onsubmit="event.preventDefault(); handleAction();">
         <h2 id="actionTitle" class="neon-text" style="margin-bottom: 2.5rem; font-size: 2.2rem;">登 機 驗 證</h2>
         <input type="text" id="actionInput" class="cyber-input" placeholder="請輸入您的資料">
-        <button class="ck-btn" onclick="handleAction()" style="letter-spacing:3px;">🔍 開 始 驗 證</button>
-      </div>
+        <button type="submit" class="ck-btn" style="letter-spacing:3px;">🔍 開 始 驗 證</button>
+      </form>
 
       <div id="tempRegistrationSection" class="form-card cyber-card state-hidden" style="margin-top: 2.5rem; border: 1px solid #f59e0b !important; box-shadow: 0 0 25px rgba(245, 158, 11, 0.2); text-align: left;">
         <h3 style="color: #fbbf24; font-size: 1.25rem; margin-bottom: 1.5rem; text-shadow: 0 0 10px rgba(245,158,11,0.3); font-weight: bold; text-align: center; line-height: 1.4;">
@@ -393,6 +393,19 @@
       document.title = `${systemConfig?.event_title || currentSheet || '活動'} - 活動報到系統`;
     }
 
+    async function loadSystemConfig() {
+      try {
+        const res = await fetch(`${API_BASE}/config?admin=${encodeURIComponent(currentAdmin)}&sheet=${encodeURIComponent(currentSheet)}&_t=${Date.now()}`);
+        const json = await res.json();
+        if (!res.ok || json.success === false) throw new Error(json.message || '活動設定載入失敗');
+        systemConfig = json || {};
+      } catch (e) {
+        console.error('活動設定載入失敗', e);
+        systemConfig = systemConfig || {};
+      }
+      return systemConfig;
+    }
+
     function startRegistration() {
       const splash = document.getElementById('splash-screen');
       splash.style.opacity = '0';
@@ -534,6 +547,7 @@
       try {
         const res = await fetch(`${API_BASE}/search/${searchMethod}?${searchMethod}=${encodeURIComponent(val)}&admin=${encodeURIComponent(currentAdmin)}&sheet=${encodeURIComponent(currentSheet)}`);
         const json = await res.json();
+        if (!res.ok || json.success === false) throw new Error(json.message || '查詢失敗');
         if (json.data && json.data.length > 0) {
           if (searchMethod === 'company') {
             const first = json.data[0];
@@ -542,13 +556,13 @@
               if (json.data.length === 1) {
                 const u = json.data[0];
                 if (isRegisteredUser(u)) { selectedUser = u; renderArkTerminalFromUser(u); setAppState('success'); return; }
-                selectedUser = u; renderMealOptions();
+                selectedUser = u; await renderMealOptions();
               } else { renderUserList(json.data, `請 選 擇 ${val} 的 旅 客`); }
             } else { renderCompanyList(json.data); }
           } else if (json.data.length === 1) {
             const u = json.data[0];
             if (isRegisteredUser(u)) { selectedUser = u; renderArkTerminalFromUser(u); setAppState('success'); return; }
-            selectedUser = u; renderMealOptions();
+            selectedUser = u; await renderMealOptions();
           } else {
             window.tempData = json.data; renderUserList(json.data, '搜尋結果');
           }
@@ -563,7 +577,7 @@
           else if (searchMethod === 'phone') document.getElementById('addPhone').value = val;
           else if (searchMethod === 'name') document.getElementById('addName').value = val;
         }
-      } catch(e) { alert('通訊矩陣連線中斷'); }
+      } catch(e) { alert(`資料查詢失敗：${e.message || '請稍後再試'}`); }
     }
 
     function isRegisteredUser(u) { return u.status === 'checked_in' || u.status === '已報到' || u.status === '替代'; }
@@ -611,10 +625,15 @@
     }
 
     async function renderMealOptions() {
-      const res = await fetch(`${API_BASE}/config?admin=${encodeURIComponent(currentAdmin)}&sheet=${encodeURIComponent(currentSheet)}`);
-      systemConfig = await res.json();
+      await loadSystemConfig();
       await mergeExperienceConfig();
-      if (!systemConfig.show_meal_options) { submitCheckin('不需要'); return; }
+      window.selectedMeal = null;
+      window.isOriginal = true;
+      window.portraitDecided = false;
+      if (systemConfig.show_meal_options === false) {
+        await submitCheckin('不需要');
+        return;
+      }
       
       const container = document.getElementById('mealOptions');
       const name = escapeHtml(selectedUser.name || selectedUser['姓名'] || '');
@@ -652,7 +671,6 @@
           <button type="button" class="portrait-consent-link" onclick="openPortraitConsentModal()">📄 查看完整條款（含不同意選項）</button>
         </div>
       `;
-      window.selectedMeal = null; window.isOriginal = true; window.portraitDecided = false;
       document.getElementById('finalBtn').disabled = true;
       setAppState('meal');
     }
@@ -695,15 +713,18 @@
       const consentEl = document.getElementById('portraitConsent');
       if (!autoMeal && consentEl && !consentEl.checked && !window.portraitDecided) return openPortraitConsentModal();
       const portraitConsent = consentEl ? consentEl.checked : false;
-      const proxyInfo = window.isOriginal ? {} : { name: document.getElementById('proxyName').value.trim(), phone: document.getElementById('proxyPhone').value.trim() };
-      if (!window.isOriginal && !proxyInfo.name) return alert('請輸入替代人姓名');
+      const isOriginal = window.isOriginal !== false;
+      const proxyNameEl = document.getElementById('proxyName');
+      const proxyPhoneEl = document.getElementById('proxyPhone');
+      const proxyInfo = isOriginal ? {} : { name: (proxyNameEl?.value || '').trim(), phone: (proxyPhoneEl?.value || '').trim() };
+      if (!isOriginal && !proxyInfo.name) return alert('請輸入替代人姓名');
 
       const btn = document.getElementById('finalBtn');
       btn.disabled = true; btn.innerHTML = '<span>登 機 核 對 中 ...</span>';
       try {
         const res = await fetch(`${API_BASE}/checkin/${selectedUser.id}?admin=${encodeURIComponent(currentAdmin)}&sheet=${encodeURIComponent(currentSheet)}`, {
           method: 'POST', headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({ meal, meal_preference: meal, is_original: window.isOriginal, proxy_info: proxyInfo, portrait_consent: portraitConsent, portrait_consent_status: portraitConsent ? '同意' : '不同意', image_rights_status: portraitConsent ? '同意肖像權' : '不同意肖像權' })
+          body: JSON.stringify({ meal, meal_preference: meal, is_original: isOriginal, proxy_info: proxyInfo, portrait_consent: portraitConsent, portrait_consent_status: portraitConsent ? '同意' : '不同意', image_rights_status: portraitConsent ? '同意肖像權' : '不同意肖像權' })
         });
         const json = await res.json();
         if (json.success) {
@@ -712,7 +733,7 @@
           setAppState('success');
         } else {
           if (json.error === 'already_done') alert('🛬 旅客已完成登機報到手續！');
-          else alert('登機確認手續未完成');
+          else alert(json.message || '登機確認手續未完成');
           btn.disabled = false; btn.innerHTML = '<span>確 認 並 核 發 登 機 證</span>';
         }
       } catch(e) {
