@@ -1,0 +1,46 @@
+{
+    "show_meal_options": true,
+    "google_sheet_name": "活動報到名單",
+    "excel_columns": {
+        "id": 6,
+        "name": 6,
+        "phone": 8,
+        "company": 3,
+        "email": 9,
+        "qrCode": 4,
+        "registeredAt": 5,
+        "checkedInAt": 14,
+        "status": 15,
+        "meal": 16
+    },
+    "products": [
+        {
+            "id": "p1",
+            "name": "職人學堂",
+            "image": "https://www.workingplus.net/static/img/logo.png",
+            "description": "職場加薪不藏私｜新人訓練套裝",
+            "link": "https://www.workingplus.net/"
+        },
+        {
+            "id": "p2",
+            "name": "聯聖企管",
+            "image": "https://rcsa-consultant.com/images/logo.png",
+            "description": "應有所「變」，應有所不「變」",
+            "link": "https://rcsa-consultant.com/index.php"
+        },
+        {
+            "id": "p3",
+            "name": "眾邦群聯",
+            "image": "",
+            "description": "協助台灣企業策略聯盟，更帶著企業前往國際佈局。",
+            "link": "https://uniasiaplus.shoplineapp.com/"
+        },
+        {
+            "id": "p4",
+            "name": "專屬紀念 T-Shirt",
+            "image": "",
+            "description": "活動限定專屬設計款式。",
+            "link": "https://example.com/product/tshirt"
+        }
+    ]
+}

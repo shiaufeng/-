@@ -1,0 +1,91 @@
+:root {
+  --ark-bg: #061A18;
+  --ark-primary: #14B8A6;
+  --ark-accent: #5EEAD4;
+  --ark-text: #ECFEFF;
+  --ark-panel: rgba(6, 26, 24, 0.88);
+  --ark-border: rgba(94, 234, 212, 0.24);
+  --ark-glow: 0 0 22px rgba(94, 234, 212, 0.28);
+}
+
+html,
+body {
+  background-color: var(--ark-bg);
+  color: var(--ark-text);
+}
+
+.circuit-background {
+  background-color: var(--ark-bg) !important;
+}
+
+.ark-background,
+body.circuit-background::before {
+  background:
+    radial-gradient(circle at 18% 12%, rgba(20, 184, 166, 0.26), transparent 34%),
+    radial-gradient(circle at 84% 78%, rgba(94, 234, 212, 0.18), transparent 34%),
+    var(--ark-bg) !important;
+}
+
+.cyber-card,
+.panel,
+.form-card,
+.modal-content {
+  background: var(--ark-panel);
+  border-color: var(--ark-border);
+  color: var(--ark-text);
+}
+
+.neon-text,
+.card-title,
+.panel-title {
+  color: var(--ark-accent);
+  text-shadow: var(--ark-glow);
+}
+
+button,
+.adm-btn,
+.ck-btn,
+.ck-btn-pill,
+.nav-link-btn,
+.tab-btn.active {
+  border-color: var(--ark-border);
+}
+
+.adm-btn-primary,
+.ck-btn-confirm {
+  color: var(--ark-primary);
+  border-color: rgba(20, 184, 166, 0.5);
+  background: rgba(20, 184, 166, 0.08);
+}
+
+.adm-btn-primary:hover,
+.ck-btn-confirm:hover:not(:disabled) {
+  border-color: var(--ark-primary);
+  background: rgba(20, 184, 166, 0.18);
+}
+
+input,
+textarea,
+select,
+.cyber-input {
+  background: rgba(2, 12, 11, 0.58);
+  color: var(--ark-text);
+  border-color: var(--ark-border);
+}
+
+input:focus,
+textarea:focus,
+select:focus,
+.cyber-input:focus {
+  border-color: var(--ark-accent);
+  box-shadow: 0 0 0 3px rgba(94, 234, 212, 0.12);
+  outline: none;
+}
+
+@media (max-width: 768px) {
+  body.is-mobile-view .cyber-card,
+  body.is-mobile-view .form-card,
+  body.is-mobile-view .panel {
+    border-radius: 0.9rem;
+  }
+}

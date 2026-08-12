@@ -1,0 +1,954 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+ <head>
+  <meta charset="utf-8"/>
+  <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+  <title>
+   智慧方舟 · 大會看板
+  </title>
+  <link href="https://fonts.googleapis.com/css2?family=Michroma&family=Noto+Sans+TC:wght@400;700;900&display=swap" rel="stylesheet"/>
+  <style>
+   *, *::before, *::after {
+  box-sizing:border-box;
+  margin:0;
+  padding:0
+}
+:root {
+  --bg:#020c1b;
+  --panel:rgba(5, 16, 36, .82);
+  --cyan:#00e5ff;
+  --green:#4ade80;
+  --border:rgba(0, 229, 255, .14);
+  --text:#ddeeff;
+  --muted:rgba(180, 210, 240, .58);
+  --glow:0 0 22px rgba(0, 229, 255, .32)
+}
+html, body {
+  width:100%;
+  max-width:100%;
+  min-height:100%;
+  overflow-x:hidden
+}
+body {
+  background:var(--bg);
+  color:var(--text);
+  font-family:"Noto Sans TC", "PingFang TC", sans-serif;
+  min-height:100vh
+}
+body::before {
+  content:"";
+  position:fixed;
+  inset:0;
+  z-index:0;
+  pointer-events:none;
+  background:radial-gradient(ellipse 80% 60% at 10% 5%, rgba(0, 50, 110, .3), transparent 60%), radial-gradient(ellipse 65% 50% at 90% 92%, rgba(0, 80, 160, .2), transparent 55%)
+}
+body::after {
+  content:"";
+  position:fixed;
+  inset:0;
+  z-index:0;
+  pointer-events:none;
+  background-image:linear-gradient(rgba(0, 229, 255, .022) 1px, transparent 1px), linear-gradient(90deg, rgba(0, 229, 255, .022) 1px, transparent 1px);
+  background-size:55px 55px;
+  mask-image:radial-gradient(ellipse 90% 90% at 50% 50%, black 0%, transparent 100%)
+}
+.hdr {
+  position:sticky;
+  top:0;
+  z-index:100;
+  background:rgba(2, 8, 20, .93);
+  border-bottom:1px solid var(--border);
+  backdrop-filter:blur(16px)
+}
+.hdr-inner {
+  max-width:1600px;
+  margin:0 auto;
+  padding:0 1.75rem;
+  height:100px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:1.25rem;
+  min-width:0
+}
+.brand {
+  display:flex;
+  align-items:center;
+  gap:10px;
+  flex-shrink:0;
+  min-width:0
+}
+.brand-logo {
+  width:44px;
+  height:44px;
+  border:1.5px solid var(--cyan);
+  border-radius:10px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-size:1.35rem;
+  box-shadow:var(--glow)
+}
+.brand-name {
+  font-family:"Michroma", sans-serif;
+  font-size:.88rem;
+  letter-spacing:4px;
+  color:var(--cyan);
+  text-shadow:var(--glow)
+}
+.brand-sub {
+  font-size:.65rem;
+  color:var(--muted);
+  letter-spacing:2px;
+  margin-top:2px
+}
+.hdr-center {
+  flex:1;
+  text-align:center;
+  min-width:0
+}
+.hdr-event {
+  font-size:1rem;
+  font-weight:900;
+  letter-spacing:2px;
+  color:#fff;
+  line-height:1.1;
+  text-shadow:0 0 18px rgba(255, 255, 255, .2), var(--glow)
+}
+.hdr-en {
+  font-family:"Michroma", sans-serif;
+  font-size:.72rem;
+  letter-spacing:5px;
+  color:var(--cyan);
+  opacity:.65;
+  margin-bottom:6px
+}
+.hdr-zh {
+  font-size:clamp(1.6rem, 3.5vw, 2.6rem);
+  font-weight:900;
+  letter-spacing:6px;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  text-shadow:0 0 30px rgba(255, 255, 255, .15), 0 2px 4px rgba(0, 0, 0, .4);
+  line-height:1.1
+}
+.hdr-dates {
+  font-size:.6rem;
+  color:var(--muted);
+  letter-spacing:2px;
+  margin-top:2px
+}
+.hdr-right {
+  display:flex;
+  align-items:center;
+  gap:10px;
+  flex-shrink:0
+}
+.live-pill {
+  display:flex;
+  align-items:center;
+  gap:5px;
+  font-size:.68rem;
+  font-weight:700;
+  letter-spacing:1.5px;
+  color:var(--green);
+  background:rgba(74, 222, 128, .08);
+  border:1px solid rgba(74, 222, 128, .22);
+  padding:5px 13px;
+  border-radius:20px
+}
+.live-dot {
+  width:7px;
+  height:7px;
+  border-radius:50%;
+  background:var(--green);
+  animation:blink 1.5s infinite
+}
+@keyframes blink {
+  0%, 100% {
+    opacity:1
+  }
+  50% {
+    opacity:.3
+  }
+}
+.clock {
+  font-family:"Michroma", sans-serif;
+  font-size:1rem;
+  color:var(--cyan);
+  letter-spacing:2px
+}
+.banner {
+  position:relative;
+  z-index:10;
+  background:rgba(0, 229, 255, .04);
+  border-bottom:1px solid var(--border)
+}
+.banner-inner {
+  max-width:1600px;
+  margin:0 auto;
+  padding:.65rem 1.75rem;
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:1rem;
+  min-width:0
+}
+.b-tag {
+  font-family:"Michroma", sans-serif;
+  font-size:.6rem;
+  letter-spacing:3px;
+  color:var(--muted);
+  white-space:nowrap
+}
+.b-label {
+  font-size:.82rem;
+  letter-spacing:4px;
+  color:var(--cyan);
+  font-weight:900;
+  text-shadow:var(--glow);
+  text-align:center
+}
+.main {
+  position:relative;
+  z-index:5;
+  max-width:1600px;
+  margin:0 auto;
+  padding:1.5rem 1.75rem 2rem;
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:1.5rem;
+  min-height:calc(100dvh - 100px - 42px - 45px);
+  min-width:0
+}
+.panel {
+  background:var(--panel);
+  border:1px solid var(--border);
+  border-radius:18px;
+  backdrop-filter:blur(14px);
+  display:flex;
+  flex-direction:column;
+  overflow:hidden;
+  min-width:0
+}
+.panel::before {
+  content:"";
+  display:block;
+  flex-shrink:0;
+  height:1px;
+  background:linear-gradient(90deg, transparent 5%, var(--cyan) 40%, var(--cyan) 60%, transparent 95%);
+  opacity:.2
+}
+.panel-head {
+  padding:1rem 1.4rem .85rem;
+  border-bottom:1px solid var(--border);
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:1rem;
+  flex-shrink:0
+}
+.panel-title {
+  font-size:.86rem;
+  font-weight:900;
+  letter-spacing:2px;
+  color:var(--text);
+  display:flex;
+  align-items:center;
+  gap:7px
+}
+.panel-en {
+  font-family:"Michroma", sans-serif;
+  font-size:.58rem;
+  letter-spacing:2px;
+  color:var(--muted)
+}
+.panel-body {
+  flex:1;
+  padding:1.4rem;
+  overflow-y:auto;
+  overscroll-behavior:contain;
+  min-width:0
+}
+.donut-layout {
+  height:100%;
+  display:grid;
+  grid-template-columns:240px 1fr;
+  gap:1.4rem;
+  align-items:center;
+  min-width:0
+}
+.donut-wrap {
+  width:240px;
+  height:240px;
+  position:relative;
+  flex-shrink:0
+}
+.donut-center {
+  position:absolute;
+  inset:0;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  text-align:center;
+  pointer-events:none
+}
+.donut-num {
+  font-family:"Michroma", sans-serif;
+  font-size:2.05rem;
+  color:#fff;
+  text-shadow:var(--glow);
+  line-height:1.05
+}
+.donut-lbl {
+  margin-top:.25rem;
+  font-size:.78rem;
+  color:var(--muted);
+  letter-spacing:2px
+}
+.legend {
+  display:grid;
+  gap:.58rem;
+  min-width:0
+}
+.leg {
+  display:grid;
+  grid-template-columns:12px minmax(0, 1fr) auto;
+  gap:.55rem;
+  align-items:center;
+  font-size:.86rem;
+  min-width:0
+}
+.dot {
+  width:10px;
+  height:10px;
+  border-radius:50%;
+  box-shadow:0 0 10px currentColor
+}
+.leg-name {
+  overflow:hidden;
+  white-space:nowrap;
+  text-overflow:ellipsis;
+  color:#dff
+}
+.leg-num {
+  font-family:"Michroma", sans-serif;
+  color:var(--cyan);
+  font-size:.78rem
+}
+.timeline {
+  display:grid;
+  gap:.8rem
+}
+.agenda {
+  display:grid;
+  grid-template-columns:82px 1fr;
+  gap:.8rem;
+  padding:.8rem;
+  border:1px solid rgba(0, 229, 255, .12);
+  border-radius:12px;
+  background:rgba(255, 255, 255, .03)
+}
+.agenda.active {
+  border-color:rgba(74, 222, 128, .45);
+  box-shadow:0 0 18px rgba(74, 222, 128, .1)
+}
+.ag-time {
+  font-family:"Michroma", sans-serif;
+  color:var(--cyan);
+  font-size:.75rem
+}
+.ag-title {
+  font-weight:900;
+  color:#fff
+}
+.ag-desc {
+  font-size:.82rem;
+  color:var(--muted);
+  margin-top:.15rem
+}
+.enterprise-list {
+  display:grid;
+  grid-template-columns:repeat(2, minmax(0, 1fr));
+  gap:.8rem
+}
+.enterprise-card {
+  display:grid;
+  grid-template-columns:86px 1fr;
+  gap:.75rem;
+  align-items:center;
+  padding:.75rem;
+  border:1px solid rgba(0, 229, 255, .12);
+  border-radius:12px;
+  background:rgba(255, 255, 255, .03);
+  min-width:0
+}
+.enterprise-img {
+  width:86px;
+  height:62px;
+  border-radius:10px;
+  object-fit:cover;
+  background:rgba(0, 229, 255, .06);
+  border:1px solid rgba(0, 229, 255, .12)
+}
+.enterprise-name {
+  font-weight:900;
+  color:#fff;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap
+}
+.enterprise-desc {
+  color:var(--muted);
+  font-size:.78rem;
+  display:-webkit-box;
+  -webkit-line-clamp:2;
+  -webkit-box-orient:vertical;
+  overflow:hidden
+}
+.ftr {
+  position:relative;
+  z-index:20;
+  max-width:1600px;
+  margin:0 auto;
+  padding:.4rem 1.75rem 1rem;
+  display:flex;
+  justify-content:space-between;
+  color:var(--muted);
+  font-size:.68rem;
+  letter-spacing:2px;
+  gap:1rem
+}
+.empty {
+  color:var(--muted);
+  text-align:center;
+  padding:2rem 1rem
+}
+.ds {
+  transition:stroke-dasharray .35s ease, stroke-dashoffset .35s ease
+}
+img, svg, canvas {
+  max-width:100%
+}
+@media(max-width:1080px) {
+  .main {
+    grid-template-columns:1fr
+  }
+  .donut-layout {
+    grid-template-columns:220px 1fr
+  }
+  .enterprise-list {
+    grid-template-columns:1fr
+  }
+}
+@media(max-width:860px) {
+  body {
+    overflow-x:hidden
+  }
+  .hdr-inner {
+    height:auto;
+    min-height:88px;
+    padding:.75rem 1rem;
+    gap:.65rem
+  }
+  .brand {
+    min-width:0
+  }
+  .brand-logo {
+    width:38px;
+    height:38px
+  }
+  .brand-name {
+    max-width:calc(100vw - 125px);
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+    font-size:.72rem;
+    letter-spacing:2px
+  }
+  .brand-sub {
+    font-size:.58rem
+  }
+  .hdr-center {
+    order:3;
+    flex-basis:100%;
+    width:100%
+  }
+  .hdr-zh {
+    white-space:normal;
+    overflow:visible;
+    text-overflow:clip;
+    letter-spacing:2px;
+    font-size:clamp(1.25rem, 7vw, 1.85rem)
+  }
+  .hdr-event {
+    font-size:.82rem
+  }
+  .hdr-en {
+    font-size:.58rem;
+    letter-spacing:3px
+  }
+  .hdr-right {
+    gap:.45rem
+  }
+  .clock {
+    font-size:.72rem
+  }
+  .live-pill {
+    font-size:.58rem;
+    padding:4px 8px
+  }
+  .banner-inner {
+    padding:.5rem 1rem;
+    justify-content:center
+  }
+  .b-tag {
+    display:none
+  }
+  .b-label {
+    font-size:.7rem;
+    letter-spacing:2px
+  }
+  .main {
+    padding:1rem;
+    gap:1rem
+  }
+  .panel-head {
+    padding:.85rem 1rem
+  }
+  .panel-title {
+    font-size:.78rem;
+    letter-spacing:1px
+  }
+  .panel-en {
+    display:none
+  }
+  .panel-body {
+    padding:1rem
+  }
+  .donut-layout {
+    width:100%;
+    max-width:100%;
+    grid-template-columns:1fr;
+    justify-items:center
+  }
+  .donut-wrap {
+    width:200px;
+    height:200px
+  }
+  .donut-num {
+    font-size:1.65rem
+  }
+  #donut-svg {
+    width:100%;
+    max-width:200px;
+    height:auto
+  }
+  .legend {
+    width:100%
+  }
+  .leg {
+    grid-template-columns:12px minmax(0, 1fr) auto
+  }
+  .enterprise-card {
+    grid-template-columns:88px minmax(0, 1fr)
+  }
+  .enterprise-img {
+    width:88px;
+    height:64px
+  }
+  .ftr {
+    padding:.45rem 1rem 1rem;
+    flex-direction:column;
+    text-align:center;
+    gap:.3rem
+  }
+}
+@media(max-width:480px) {
+  .main {
+    padding:.75rem
+  }
+  .brand-name {
+    max-width:58vw
+  }
+  .donut-wrap {
+    width:180px;
+    height:180px
+  }
+  .enterprise-card {
+    grid-template-columns:1fr
+  }
+  .enterprise-img {
+    width:100%;
+    height:130px
+  }
+  .agenda {
+    grid-template-columns:1fr
+  }
+  .ag-time {
+    font-size:.68rem
+  }
+}
+  </style>
+ </head>
+ <body>
+  <header class="hdr">
+   <div class="hdr-inner">
+    <div class="brand">
+     <div class="brand-logo">
+      ⛵
+     </div>
+     <div>
+      <div class="brand-name">
+       SMART WISDOM ARK
+      </div>
+      <div class="brand-sub">
+       智慧方舟 · 大會投影看板
+      </div>
+     </div>
+    </div>
+    <div class="hdr-center">
+     <div class="hdr-event" id="hdr-event">
+      2026 全球面對面
+     </div>
+     <div class="hdr-en" id="hdr-en">
+      GLOBAL FACE TO FACE
+     </div>
+     <div class="hdr-zh" id="hdr-zh">
+      世代共榮的數位聚合
+     </div>
+     <div class="hdr-dates" id="hdr-dates">
+      2026/06/01 ─ 2026/08/XX
+     </div>
+    </div>
+    <div class="hdr-right">
+     <div class="live-pill">
+      <span class="live-dot">
+      </span>
+      LIVE
+     </div>
+     <div class="clock" id="clock">
+      --:--:--
+     </div>
+    </div>
+   </div>
+  </header>
+  <div class="banner">
+   <div class="banner-inner">
+    <span class="b-tag">
+     智匯方舟 | SMART WISDOM ARK
+    </span>
+    <span class="b-label" id="b-mid">
+     2026 全球面對面 · GLOBAL FACE TO FACE
+    </span>
+    <span class="b-tag">
+     智匯方舟 | SMART WISDOM ARK
+    </span>
+   </div>
+  </div>
+  <main class="main">
+   <section class="panel">
+    <div class="panel-head">
+     <div class="panel-title">
+      🌐 實時登艦產業生態分佈
+     </div>
+     <span class="panel-en">
+      INDUSTRY ECOSYSTEM
+     </span>
+    </div>
+    <div class="panel-body">
+     <div class="donut-layout">
+      <div class="donut-wrap">
+       <svg height="240" id="donut-svg" style="transform:rotate(-90deg)" viewbox="0 0 240 240" width="240">
+        <circle cx="120" cy="120" fill="none" r="85" stroke="rgba(255,255,255,.05)" stroke-width="32">
+        </circle>
+       </svg>
+       <div class="donut-center">
+        <div class="donut-num" id="donut-num">
+         100%
+        </div>
+        <div class="donut-lbl" id="donut-lbl">
+         產業分佈
+        </div>
+       </div>
+      </div>
+      <div class="legend" id="legend">
+       <div class="empty">
+        連線中…
+       </div>
+      </div>
+     </div>
+    </div>
+   </section>
+   <section class="panel">
+    <div class="panel-head">
+     <div class="panel-title">
+      🗓 大會時空座標 · 議程
+     </div>
+     <span class="panel-en">
+      CONFERENCE TIMELINE
+     </span>
+    </div>
+    <div class="panel-body">
+     <div class="timeline" id="timeline">
+      <div class="empty">
+       載入議程中…
+      </div>
+     </div>
+    </div>
+   </section>
+   <section class="panel" style="grid-column:1/-1">
+    <div class="panel-head">
+     <div class="panel-title">
+      🏢 今日參與企業
+     </div>
+     <span class="panel-en">
+      PARTNER DIRECTORY
+     </span>
+    </div>
+    <div class="panel-body">
+     <div class="enterprise-list" id="enterprise-list">
+      <div class="empty">
+       載入參與企業中…
+      </div>
+     </div>
+    </div>
+   </section>
+  </main>
+  <footer class="ftr">
+   <span id="ftr-l">
+    SMART ARK CONTROL TERMINAL © 2026 智匯方舟
+   </span>
+   <span id="ftr-r">
+    ● CONNECTING…
+   </span>
+  </footer>
+  <script>
+   const UP=new URLSearchParams(location.search);
+let SHEET=UP.get('sheet')||'';
+const ADMIN=UP.get('admin')||'admin';
+const API='/api';
+const PALETTE=['#00E5FF', '#FF2D95', '#FFD600', '#00E676', '#7C4DFF', '#FF6D00', '#40C4FF', '#FF5252', '#C6FF00', '#B388FF', '#69F0AE', '#FFAB40'];
+let cfg=null, lastFingerprint=-1, channel=null;
+function enc(v) {
+  return encodeURIComponent(v||'')
+}
+async function get(url) {
+  const r=await fetch(url);
+  return await r.json()
+}
+function setText(id, v) {
+  const el=document.getElementById(id);
+  if(el)el.textContent=v??''
+}
+function esc(v) {
+  return String(v??'').replace(/[&<>'"]/g, m=>({
+    '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;'
+  }
+  [m]))
+}
+function tick() {
+  document.getElementById('clock').textContent=new Date().toLocaleTimeString('zh-TW', {
+    hour12:false
+  })
+}
+window.onload=async()=> {
+  tick();
+  setInterval(tick, 1000);
+  setupRefresh();
+  if(!SHEET) {
+    try {
+      const r=await get(`${API}/current_sheet?admin=${enc(ADMIN)}`);
+      if(r.success&&r.current_sheet)SHEET=r.current_sheet
+    }
+    catch {
+
+    }
+
+  }
+  await loadCfg();
+  await poll();
+  setInterval(poll, 12000);
+  setInterval(loadCfg, 30000)
+};
+function setupRefresh() {
+  window.addEventListener('storage', e=> {
+    if(e.key==='dashboard_refresh_signal') {
+      loadCfg(); poll(true)
+    }
+
+  });
+  if('BroadcastChannel'in window) {
+    channel=new BroadcastChannel('smart-ark-dashboard');
+    channel.onmessage=e=> {
+      if(e.data&&e.data.type==='agenda-updated') {
+        loadCfg();
+        poll(true)
+      }
+
+    }
+
+  }
+
+}
+async function loadCfg() {
+  try {
+    const d=await get(`${API}/event-config?admin=${enc(ADMIN)}&sheet=${enc(SHEET)}&t=${Date.now()}`);
+    cfg=d.config||d|| {
+
+    };
+    applyHeader();
+    renderAgenda();
+    renderEnterprises()
+  }
+  catch(e) {
+    console.warn('config', e)
+  }
+
+}
+function cleanTitle(v) {
+  v=String(v||'').trim();
+  if(!v||v==='活動報到名單'||v==='活動報名表單')return'2026 全球面對面';
+  return v.replace(/活動報名表單/g, '').replace(/活動報到名單/g, '').trim()||'2026 全球面對面'
+}
+function applyHeader() {
+  if(!cfg)return;
+  const eventName=cleanTitle(cfg.event_title||cfg.exp_event_title||cfg.google_sheet_name||SHEET);
+  const subtitle=cfg.projection_title||cfg.event_subtitle||cfg.projection_subtitle||cfg.exp_event_subtitle||'世代共榮的數位聚合';
+  setText('hdr-event', eventName);
+  setText('hdr-en', 'GLOBAL FACE TO FACE');
+  setText('hdr-zh', subtitle);
+  const ds=cfg.date_start||cfg.event_date_start||cfg.exp_event_date_start||'';
+  const de=cfg.date_end||cfg.event_date_end||cfg.exp_event_date_end||'';
+  setText('hdr-dates', ds||de?`${ds}${de?' ─ '+de:''}`:'');
+  setText('b-mid', `${eventName} · GLOBAL FACE TO FACE`);
+  const brand=cfg.brand_name||cfg.exp_brand_name||'智匯方舟';
+  setText('ftr-l', `SMART ARK CONTROL TERMINAL © 2026 ${brand}`)
+}
+async function poll(force=false) {
+  try {
+    const d=await get(`${API}/dashboard_stats?admin=${enc(ADMIN)}&sheet=${enc(SHEET)}&t=${Date.now()}`);
+    if(!d.success)return;
+    const s=d.stats|| {
+
+    };
+    setText('donut-num', '100%');
+    setText('donut-lbl', '產業分佈');
+    const src=s.industry_logs||s.logs||[];
+    const fp=JSON.stringify([s.total||0, s.checked_in||0, src.length, src.map(x=>x.company||x.company_name||'').join('|')]);
+    if(force||fp!==lastFingerprint) {
+      lastFingerprint=fp;
+      buildDonut(src)
+    }
+    renderAgenda();
+    renderEnterprises();
+    setStatus('● LIVE', '#4ade80')
+  }
+  catch(e) {
+    setStatus('● OFFLINE', '#f87171')
+  }
+
+}
+function setStatus(t, c) {
+  const el=document.getElementById('ftr-r');
+  el.textContent=t;
+  el.style.color=c
+}
+function getMappings() {
+  return cfg?.industry_mappings||[]
+}
+function findCat(company) {
+  const co=String(company||'');
+  for(const m of getMappings()) {
+    const key=String(m.keyword||m.company_name||m.company||'').trim();
+    if(key&&co.includes(key))return String(m.category||m.industry||'其他').trim()||'其他'
+  }
+  return co?'未分類':'其他'
+}
+function buildDonut(logs) {
+  const counter= {
+
+  };
+  (logs||[]).forEach(log=> {
+    const cat=findCat(log.company||log.company_name); counter[cat]=(counter[cat]||0)+1
+  });
+  if(!Object.keys(counter).length) {
+    drawDonut([ {
+      name:'尚無資料', count:1, pct:100, color:'rgba(255,255,255,.12)'
+    }]);
+    drawLegend([]);
+    return
+  }
+  const total=Object.values(counter).reduce((a, b)=>a+b, 0)||1;
+  const segs=Object.entries(counter).sort((a, b)=>b[1]-a[1]).map(([name, count], i)=>({
+    name, count, pct:+(count/total*100).toFixed(1), color:PALETTE[i%PALETTE.length]
+  }));
+  drawDonut(segs);
+  drawLegend(segs)
+}
+function drawDonut(segs) {
+  const svg=document.getElementById('donut-svg');
+  svg.querySelectorAll('.ds').forEach(n=>n.remove());
+  const C=2*Math.PI*85;
+  let off=0;
+  for(const s of segs) {
+    const len=(s.pct/100)*C;
+    if(len<=0)continue;
+    const el=document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    el.setAttribute('class', 'ds');
+    el.setAttribute('cx', '120');
+    el.setAttribute('cy', '120');
+    el.setAttribute('r', '85');
+    el.setAttribute('fill', 'none');
+    el.setAttribute('stroke', s.color);
+    el.setAttribute('stroke-width', '32');
+    el.setAttribute('stroke-linecap', 'round');
+    el.setAttribute('stroke-dasharray', `${Math.max(0,len-2)} ${C}`);
+    el.setAttribute('stroke-dashoffset', String(-off));
+    svg.appendChild(el);
+    off+=len
+  }
+
+}
+function drawLegend(segs) {
+  const box=document.getElementById('legend');
+  if(!segs.length) {
+    box.innerHTML='<div class="empty">尚無已報到產業資料</div>';
+    return
+  }
+  box.innerHTML=segs.map(s=>`<div class="leg"><span class="dot" style="background:${s.color};color:${s.color}"></span><span class="leg-name">${esc(s.name)}</span><span class="leg-num">${s.pct}%｜${s.count}</span></div>`).join('')
+}
+function agendaList() {
+  return cfg?.agenda||cfg?.schedule||[]
+}
+function renderAgenda() {
+  const box=document.getElementById('timeline');
+  const list=agendaList();
+  if(!list.length) {
+    box.innerHTML='<div class="empty">📡 後台尚未設定議程</div>';
+    return
+  }
+  const now=new Date();
+  const hm=now.getHours()*60+now.getMinutes();
+  box.innerHTML=list.map((a, i)=> {
+    const t=String(a.time||'').match(/(\d{1,2}):(\d{2})/); let active=false; if(t) {
+      const m=+t[1]*60+ +t[2]; const nt=list[i+1]?.time?.match?.(/(\d{1,2}):(\d{2})/); const next=nt?+nt[1]*60+ +nt[2]:m+45; active=hm>=m&&hm<next
+    }
+    return `<div class="agenda ${active?'active':''}"><div class="ag-time">${esc(a.time||'--:--')}</div><div><div class="ag-title">${esc(a.title||a.event||'未命名議程')}</div><div class="ag-desc">${esc(a.description||'')}</div></div></div>`
+  }).join('')
+}
+function renderEnterprises() {
+  const box=document.getElementById('enterprise-list');
+  const rows=cfg?.exhibitors||cfg?.partners||[];
+  if(!rows.length) {
+    box.innerHTML='<div class="empty">後台尚未設定參與企業</div>';
+    return
+  }
+  box.innerHTML=rows.map(e=>`<div class="enterprise-card"><img class="enterprise-img" src="${esc(e.image_url||e.logo||'')}" onerror="this.style.display='none'"><div><div class="enterprise-name">${esc(e.name||e.company_name||'參與企業')}</div><div class="enterprise-desc">${esc(e.description||e.industry||'')}</div></div></div>`).join('')
+}
+  </script>
+ </body>
+</html>

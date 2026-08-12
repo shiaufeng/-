@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>智慧方舟 - 授權中心</title>
+<link rel="stylesheet" href="smart-ark-theme.css">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 100vh; overflow-x: hidden;
+  background-color: #030712; padding: 1.5rem;
+}
+.login-card {
+  width: 520px; max-width: 100%; padding: 3.5rem 3.2rem;
+  text-align: center; position: relative;
+  background: rgba(10, 20, 35, 0.82) !important;
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(0, 229, 255, 0.35) !important;
+  border-left: 6px solid var(--text-dark) !important;
+  border-radius: 1.25rem !important;
+  box-shadow: 0 0 40px rgba(0,0,0,0.8), inset 0 0 25px rgba(0,229,255,0.1);
+  animation: panelSlideIn 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.login-card::before {
+  content: ''; position: absolute; top: 0; right: 0;
+  width: 40px; height: 40px;
+  border-top: 2px solid var(--text-dark); border-right: 2px solid var(--text-dark);
+  border-radius: 0 1.1rem 0 0; opacity: 0.6;
+}
+.login-icon { font-size: 4.2rem; margin-bottom: 0.65rem; filter: drop-shadow(0 0 14px rgba(255,140,0,0.55)); }
+.auth-title { margin-bottom: 0.5rem; font-size: 2.35rem; color: #eaffff !important; text-shadow: 0 0 10px rgba(0,229,255,0.7), 0 0 24px rgba(0,229,255,0.28); letter-spacing: 2px; font-weight: 800; }
+.tech-sub-title { color: rgba(0,229,255,0.78); font-size: 0.8rem; letter-spacing: 4px; margin-bottom: 2.3rem; text-transform: uppercase; font-weight: bold; }
+.auth-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 0.7rem; margin-bottom: 1.6rem; padding: 0.35rem; border: 1px solid rgba(0,229,255,0.22); border-radius: 0.75rem; background: rgba(0,0,0,0.18); }
+.auth-tab-btn { border: 1px solid transparent; background: transparent; color: #8aa0aa; padding: 0.75rem 0.6rem; border-radius: 0.55rem; cursor: pointer; font-weight: 700; letter-spacing: 1.5px; transition: all 0.18s ease; }
+.auth-tab-btn.active { color: #00e5ff; border-color: rgba(0,229,255,0.42); background: rgba(0,229,255,0.11); box-shadow: 0 0 16px rgba(0,229,255,0.12); }
+.auth-form { display: none; }
+.auth-form.active { display: block; }
+input:-webkit-autofill, input:-webkit-autofill:hover, input:-webkit-autofill:focus, input:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 40px rgba(5,15,30,0.95) inset !important;
+  -webkit-text-fill-color: var(--text-dark) !important;
+  transition: background-color 5000s ease-in-out 0s;
+}
+.cyber-input { margin-bottom: 1.25rem; width: 100%; padding: 1.15rem 1.2rem; font-size: 1.08rem; letter-spacing: 1.5px; border-radius: 0.5rem; }
+.cyber-button { width: 100%; margin-top: 0.75rem; padding: 1.15rem; font-size: 1.08rem; font-weight: bold; letter-spacing: 3px; border-radius: 0.5rem; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 0.5rem; }
+.cyber-button.secondary { border-color: rgba(74,222,128,0.55); color: #4ade80; background: rgba(74,222,128,0.08); }
+.cyber-button.secondary:hover:not(:disabled) { background: rgba(74,222,128,0.18); border-color: #4ade80; box-shadow: 0 0 18px rgba(74,222,128,0.18); }
+.hint-text { color: #8aa0aa; font-size: 0.82rem; line-height: 1.65; margin-top: 1rem; letter-spacing: 0.5px; text-align: left; }
+.message-box { font-size: 0.95rem; padding: 0.8rem; border-radius: 0.5rem; margin-bottom: 1.3rem; display: none; align-items: center; justify-content: center; gap: 0.5rem; animation: shake 0.4s ease; line-height: 1.5; }
+.message-box.error { color: #ff6b6b; background: rgba(255,77,77,0.1); border: 1px solid rgba(255,77,77,0.4); }
+.message-box.success { color: #4ade80; background: rgba(74,222,128,0.1); border: 1px solid rgba(74,222,128,0.4); }
+@keyframes panelSlideIn { from { opacity:0; transform:translateY(30px); } to { opacity:1; transform:translateY(0); } }
+@keyframes shake { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-6px)} 75%{transform:translateX(6px)} }
+@media(max-width:600px) {
+  body { padding: 0.8rem; align-items: flex-start; padding-top: 2rem; }
+  .login-card { padding: 2.4rem 1.35rem; }
+  .login-icon { font-size: 3.4rem; }
+  .auth-title { font-size: 1.8rem; letter-spacing: 1px; }
+  .tech-sub-title { font-size: 0.68rem; letter-spacing: 2.5px; margin-bottom: 1.8rem; }
+  .cyber-input { font-size: 1rem; padding: 1rem; }
+  .cyber-button { font-size: 0.95rem; letter-spacing: 1.5px; }
+  .auth-tab-btn { font-size: 0.85rem; letter-spacing: 1px; }
+}
+</style>
+</head>
+<body class="circuit-background">
+<div class="ark-background"></div>
+<div class="login-card cyber-card">
+  <div class="login-icon">⚡</div>
+  <h2 class="auth-title">艦橋訪問授權</h2>
+  <div class="tech-sub-title">Bridge Access Authorization</div>
+
+  <div class="auth-tabs">
+    <button type="button" id="loginTab" class="auth-tab-btn active" onclick="switchAuthMode('login')">登入</button>
+    <button type="button" id="registerTab" class="auth-tab-btn" onclick="switchAuthMode('register')">註冊</button>
+  </div>
+
+  <div id="msgBox" class="message-box error"></div>
+
+  <!-- 登入表單 -->
+  <!-- autocomplete="off" 防止瀏覽器自動填入活動名稱等不相關內容 -->
+  <div id="loginForm" class="auth-form active">
+    <form autocomplete="off" onsubmit="return false;">
+      <!-- 隱藏假欄位：欺騙瀏覽器不要自動填入真正的帳號密碼欄位 -->
+      <input type="text" name="fakeuser" style="display:none;" tabindex="-1" aria-hidden="true">
+      <input type="password" name="fakepass" style="display:none;" tabindex="-1" aria-hidden="true">
+      <input
+        type="text"
+        id="u"
+        name="admin_username"
+        class="cyber-input"
+        placeholder="系統管理員帳號 (ADMIN ID)"
+        autocomplete="off"
+        value=""
+      >
+      <input
+        type="password"
+        id="p"
+        name="admin_password"
+        class="cyber-input"
+        placeholder="安全訪問密鑰 (ACCESS KEY)"
+        autocomplete="off"
+        value=""
+      >
+      <button class="cyber-button" id="loginBtn" type="button" onclick="doLogin()">
+        <span>啟動安全驗證 SECURE LOGIN</span>
+      </button>
+    </form>
+  </div>
+
+  <!-- 註冊表單 -->
+  <div id="registerForm" class="auth-form">
+  <form autocomplete="off" onsubmit="return false;">
+    <input type="text" id="ru" class="cyber-input" placeholder="建立管理員帳號" autocomplete="off">
+    <input type="password" id="rp" class="cyber-input" placeholder="建立密碼，至少 6 碼" autocomplete="off">
+    <input type="password" id="rp2" class="cyber-input" placeholder="再次輸入密碼" autocomplete="off">
+
+    <button class="cyber-button secondary" id="registerBtn" type="button" onclick="doRegister()">
+      <span>建立管理員帳號 REGISTER</span>
+    </button>
+  </form>
+</div>
+
+<script>
+let authMode = 'login';
+
+function showMessage(type, text) {
+  const box = document.getElementById('msgBox');
+  box.className = `message-box ${type}`;
+  box.innerHTML = text;
+  box.style.display = 'flex';
+}
+function clearMessage() {
+  const box = document.getElementById('msgBox');
+  box.style.display = 'none';
+  box.innerHTML = '';
+}
+function switchAuthMode(mode) {
+  authMode = mode;
+  clearMessage();
+  document.getElementById('loginForm').classList.toggle('active', mode === 'login');
+  document.getElementById('registerForm').classList.toggle('active', mode === 'register');
+  document.getElementById('loginTab').classList.toggle('active', mode === 'login');
+  document.getElementById('registerTab').classList.toggle('active', mode === 'register');
+}
+
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') {
+    if (authMode === 'login') doLogin();
+    else doRegister();
+  }
+});
+
+async function doLogin() {
+  const u = document.getElementById('u').value.trim();
+  const p = document.getElementById('p').value.trim();
+  const btn = document.getElementById('loginBtn');
+  if (!u || !p) { showMessage('error', '❌ 請完整輸入管理員帳號與存取密鑰'); return; }
+  clearMessage();
+  btn.disabled = true;
+  btn.innerHTML = '<span>📡 正在建構安全連線...</span>';
+  try {
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: u, password: p })
+    });
+    const result = await res.json().catch(() => ({}));
+    if (res.ok) {
+      btn.innerHTML = '<span>🟢 授權成功，跳轉中...</span>';
+      btn.style.borderColor = '#4ade80';
+      btn.style.color = '#4ade80';
+      setTimeout(() => { location.href = '/admin'; }, 500);
+    } else {
+      btn.disabled = false;
+      btn.innerHTML = '<span>啟動安全驗證 SECURE LOGIN</span>';
+      showMessage('error', `❌ ${result.message || '授權失敗：管理員身分或密鑰錯誤'}`);
+    }
+  } catch(e) {
+    btn.disabled = false;
+    btn.innerHTML = '<span>啟動安全驗證 SECURE LOGIN</span>';
+    showMessage('error', '❌ 連線異常：無法聯絡中央驗證伺服器');
+  }
+}
+
+async function doRegister() {
+  const username  = document.getElementById('ru').value.trim();
+  const password  = document.getElementById('rp').value.trim();
+  const password2 = document.getElementById('rp2').value.trim();
+  const eventName = document.getElementById('revent').value.trim() || '活動報到名單';
+  const inviteCode = document.getElementById('rinvite').value.trim();
+  const btn = document.getElementById('registerBtn');
+  if (!username || !password || !password2) { showMessage('error', '❌ 請完整輸入帳號、密碼與確認密碼'); return; }
+  if (username.length < 3) { showMessage('error', '❌ 帳號至少需要 3 個字元'); return; }
+  if (password.length < 6) { showMessage('error', '❌ 密碼至少需要 6 碼'); return; }
+  if (password !== password2) { showMessage('error', '❌ 兩次輸入的密碼不一致'); return; }
+  clearMessage();
+  btn.disabled = true;
+  btn.innerHTML = '<span>📡 正在建立管理員...</span>';
+  try {
+    const res = await fetch('/api/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password, allowed_events: eventName, invite_code: inviteCode })
+    });
+    const result = await res.json().catch(() => ({}));
+    if (res.ok && result.success) {
+      btn.innerHTML = '<span>🟢 建立成功</span>';
+      showMessage('success', '✅ 管理員建立成功，請使用新帳號登入');
+      document.getElementById('u').value = username;
+      document.getElementById('p').value = '';
+      document.getElementById('rp').value = '';
+      document.getElementById('rp2').value = '';
+      setTimeout(() => {
+        btn.disabled = false;
+        btn.innerHTML = '<span>建立管理員帳號 REGISTER</span>';
+        switchAuthMode('login');
+      }, 900);
+    } else {
+      btn.disabled = false;
+      btn.innerHTML = '<span>建立管理員帳號 REGISTER</span>';
+      showMessage('error', `❌ ${result.message || '註冊失敗，請稍後再試'}`);
+    }
+  } catch(e) {
+    btn.disabled = false;
+    btn.innerHTML = '<span>建立管理員帳號 REGISTER</span>';
+    showMessage('error', '❌ 連線異常：無法聯絡註冊伺服器');
+  }
+}
+</script>
+</body>
+</html>
