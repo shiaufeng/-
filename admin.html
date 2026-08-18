@@ -155,6 +155,16 @@
      <div class="stat-card">已報到人員<b id="stat-checked">0</b></div>
      <div class="stat-card">未到人員<b id="stat-pending">0</b></div>
     </div>
+    <div class="form-grid">
+     <div class="panel">
+      <div class="actions"><div class="panel-title" style="margin:0">產業類別分布</div><select id="peopleScope" onchange="renderPeopleStats()" style="width:auto"><option value="checked_in">已報到</option><option value="all">全部名單</option></select></div>
+      <div id="industry-stats-container" style="display:grid;gap:.55rem;margin-top:.8rem"></div>
+     </div>
+     <div class="panel">
+      <div class="panel-title">葷素／餐飲需求</div>
+      <div id="meal-stats-container" style="display:grid;gap:.55rem"></div>
+     </div>
+    </div>
     <div class="panel">
      <div class="panel-title">桌次報到率統計</div>
      <p class="msg">已改成「01桌、02桌…」彙整顯示；點進去可看到該桌所有座位人員。</p>
@@ -162,7 +172,7 @@
     </div>
     <div class="panel">
      <div class="actions">
-      <div class="panel-title" style="margin:0">即時登機紀錄（最新 25 筆）</div>
+      <div class="panel-title" style="margin:0">即時登艦紀錄（最新 25 筆）</div>
       <button class="btn btn-success right" onclick="openAddModal()">➕ 臨時報到</button>
       <a class="btn" id="exportLink">匯出名單</a>
      </div>
@@ -251,7 +261,7 @@
       <div class="msg" id="csvPreviewSummary"></div>
       <div class="table-wrap" style="margin-top:.8rem">
        <table>
-        <thead><tr><th>姓名</th><th>手機</th><th>公司</th><th>職稱</th><th>桌號</th><th>備註</th></tr></thead>
+         <thead><tr><th>姓名</th><th>手機</th><th>公司</th><th>職稱</th><th>產業類別</th><th>葷素</th><th>桌號</th><th>備註</th></tr></thead>
         <tbody id="csvPreviewBody"></tbody>
        </table>
       </div>
@@ -312,13 +322,13 @@
      <div>
       <h3 style="color:#86efac;margin-bottom:.5rem">✅ 已報到</h3>
       <div class="table-detail-list">
-       <table><thead><tr><th>姓名</th><th>公司</th><th>職稱</th><th>手機</th><th>狀態</th></tr></thead><tbody id="tableCheckedBody"></tbody></table>
+       <table><thead><tr><th>姓名</th><th>公司</th><th>職稱</th><th>手機</th><th>葷素</th><th>狀態</th></tr></thead><tbody id="tableCheckedBody"></tbody></table>
       </div>
      </div>
      <div>
       <h3 style="color:#fcd34d;margin-bottom:.5rem">⏳ 未報到</h3>
       <div class="table-detail-list">
-       <table><thead><tr><th>姓名</th><th>公司</th><th>職稱</th><th>手機</th><th>狀態</th></tr></thead><tbody id="tablePendingBody"></tbody></table>
+       <table><thead><tr><th>姓名</th><th>公司</th><th>職稱</th><th>手機</th><th>葷素</th><th>狀態</th></tr></thead><tbody id="tablePendingBody"></tbody></table>
       </div>
      </div>
     </div>
@@ -348,7 +358,9 @@
     <div class="form-row"><label>手機號碼</label><input class="input" id="addPhone"/></div>
     <div class="form-row"><label>公司/單位</label><input class="input" id="addCompany"/></div>
     <div class="form-row"><label>職稱</label><input class="input" id="addTitle"/></div>
-    <div class="form-row"><label>桌號/座位（選填）</label><input class="input" id="addSeat"/></div>
+    <div class="form-row"><label>產業類別（選填）</label><input class="input" id="addIndustry" placeholder="例如：資訊科技"/></div>
+    <div class="form-row"><label>葷素（選填）</label><select class="input" id="addMeal"><option value="不用餐">不用餐</option><option>葷食</option><option>素食</option><option>蛋奶素</option><option>全素</option></select></div>
+    <div class="form-row"><label>桌次 *</label><input class="input" id="addSeat" placeholder="請詢問工作人員"/><small class="msg">由工作人員填寫；尚未安排時請填「待分桌」</small></div>
     <label style="display:flex;gap:.5rem;align-items:center"><input id="addPortrait" style="width:auto" type="checkbox"/>同意肖像權</label>
     <div class="actions" style="margin-top:1rem">
      <button class="btn btn-ghost" onclick="closeAddModal()">取消</button>
@@ -363,9 +375,10 @@
    let currentAdmin=urlParams.get('admin')||'admin';
    let currentSheet=urlParams.get('sheet')||'';
    let currentConfig={};
-   let products=[];
-   let companies=[];
-   let tableDetailsByKey={};
+    let products=[];
+    let companies=[];
+    let tableDetailsByKey={};
+    let dashboardPeopleStats={industry_stats:{},meal_stats:{}};
    let dashboardTimer=null;
    let csvPreviewState=null;
    let csvRequestInFlight=false;
@@ -516,14 +529,32 @@
      const d=await get(`${API_BASE}/dashboard_stats${qs()}&t=${Date.now()}`);
      if(!d.success)throw new Error(d.message||'戰情儀表板載入失敗');
      const s=d.stats||{};
-     setText('stat-total',s.total||0);
-     setText('stat-checked',s.checked_in||0);
-     setText('stat-pending',s.not_checked_in||0);
+      setText('stat-total',s.total||0);
+      setText('stat-checked',s.checked_in||0);
+      setText('stat-pending',s.not_checked_in||0);
+      dashboardPeopleStats=s;
      tableDetailsByKey={};
      (s.table_details||[]).forEach(g=>{tableDetailsByKey[String(g.table||g.seat||'未分桌')]=g.members||[];});
-     renderLogs(s.logs||[]);
-     renderTableStats(s.table_stats||[]);
-   }
+      renderLogs(s.logs||[]);
+      renderTableStats(s.table_stats||[]);
+      renderPeopleStats();
+    }
+
+    function renderStatList(targetId, rows){
+      const box=document.getElementById(targetId);
+      const list=Array.isArray(rows)?rows:[];
+      box.innerHTML=list.map(row=>{
+        const count=Number(row.count)||0;
+        const percent=Number(row.percent)||0;
+        return `<div><div class="actions"><strong>${esc(row.name||'未填')}</strong><span class="right">${count} 人｜${percent}%</span></div><div style="height:8px;background:rgba(255,255,255,.08);border-radius:999px;margin-top:.3rem"><div style="height:100%;width:${Math.max(0,Math.min(100,percent))}%;background:linear-gradient(90deg,#facc15,#60a5fa);border-radius:999px"></div></div></div>`;
+      }).join('')||'<div class="muted">尚無資料</div>';
+    }
+
+    function renderPeopleStats(){
+      const scope=document.getElementById('peopleScope')?.value||'checked_in';
+      renderStatList('industry-stats-container',dashboardPeopleStats.industry_stats?.[scope]);
+      renderStatList('meal-stats-container',dashboardPeopleStats.meal_stats?.[scope]);
+    }
 
    function portraitLabel(x){
      const raw=String(x?.portrait_consent_status||'').trim();
@@ -535,7 +566,10 @@
    function renderLogs(logs){
      document.getElementById('logs-body').innerHTML=(logs||[]).map(x=>{
        const [t,c]=portraitLabel(x);
-       return `<tr><td>${esc(x.checkedInAt||x.checked_in_at||'')}</td><td>${esc(x.name)}</td><td>${esc(x.company||x.company_name||'')}</td><td class="${c}">${t}</td></tr>`;
+       const actual=x.display_name||x.attendance_name||x.proxy_name||x.name||'';
+       const original=x.original_name||x.name||'';
+       const nameLabel=x.is_proxy||x.proxy_name ? `${actual}<div class="muted">代替 ${esc(original)}</div>` : esc(actual);
+       return `<tr><td>${esc(x.checkedInAt||x.checked_in_at||'')}</td><td>${nameLabel}</td><td>${esc(x.company||x.company_name||'')}</td><td class="${c}">${t}</td></tr>`;
      }).join('')||'<tr><td colspan="4" class="muted">尚無報到紀錄</td></tr>';
    }
 
@@ -563,12 +597,17 @@
      box.innerHTML=(rows||[]).map(r=>{
        const key=String(r.table||r.seat||'未分桌');
        const total=Number(r.total||0), checked=Number(r.checked_in??r.checked??0), pct=total?Math.round(checked/total*100):0;
-       return `<button class="panel table-card-btn" style="margin:0;padding:.8rem" onclick="openTableDetails('${encodeURIComponent(key)}')"><div class="table-card-head"><b>${esc(formatTableLabel(key))}</b><span>${checked}/${total}｜${pct}%</span></div><div class="msg">點我查看 ${esc(formatTableLabel(key))} 誰來了、誰還沒來</div><div style="height:8px;background:rgba(255,255,255,.08);border-radius:999px;margin-top:.45rem"><div style="height:100%;width:${pct}%;background:linear-gradient(90deg,#00e5ff,#4ade80);border-radius:999px"></div></div></button>`;
+       const veg=Number(r.vegetarian_total||0), vegChecked=Number(r.vegetarian_checked_in||0);
+       return `<button class="panel table-card-btn" style="margin:0;padding:.8rem" onclick="openTableDetails('${encodeURIComponent(key)}')"><div class="table-card-head"><b>${esc(formatTableLabel(key))}</b><span>${checked}/${total}｜${pct}%</span></div><div class="msg">素食 ${veg} 人（已報到 ${vegChecked} 人）｜點我查看桌次名單</div><div style="height:8px;background:rgba(255,255,255,.08);border-radius:999px;margin-top:.45rem"><div style="height:100%;width:${pct}%;background:linear-gradient(90deg,#00e5ff,#4ade80);border-radius:999px"></div></div></button>`;
      }).join('')||'<div class="muted">尚無桌次資料</div>';
    }
 
    function memberRow(x, checked){
-     return `<tr><td>${esc(x.name||'-')}</td><td>${esc(x.company||x.company_name||'-')}</td><td>${esc(x.job_title||'-')}</td><td>${esc(x.phone||'-')}</td><td><span class="status-dot ${checked?'status-ok':'status-wait'}">${checked?'已報到':'未報到'}</span></td></tr>`;
+     const actual=x.display_name||x.attendance_name||x.proxy_name||x.name||'-';
+     const original=x.original_name||x.name||'';
+     const name=x.is_proxy||x.proxy_name ? `${esc(actual)}<div class="muted">代替 ${esc(original)}</div>` : esc(actual);
+     const meal=esc(x.meal_preference||x.meal||'不用餐');
+     return `<tr><td>${name}</td><td>${esc(x.company||x.company_name||'-')}</td><td>${esc(x.job_title||'-')}</td><td>${esc(x.phone||'-')}</td><td>${meal}</td><td><span class="status-dot ${checked?'status-ok':'status-wait'}">${checked?'已報到':'未報到'}</span></td></tr>`;
    }
 
    function openTableDetails(encodedKey){
@@ -577,9 +616,11 @@
      const checked=rows.filter(x=>isCheckedStatus(x.status));
      const pending=rows.filter(x=>!isCheckedStatus(x.status));
      setText('tableDetailTitle', `${formatTableLabel(key)} 詳情`);
-     setText('tableDetailSummary', `共 ${rows.length} 人｜已報到 ${checked.length} 人｜未報到 ${pending.length} 人`);
-     document.getElementById('tableCheckedBody').innerHTML=checked.map(x=>memberRow(x,true)).join('')||'<tr><td colspan="5" class="muted">尚無已報到人員</td></tr>';
-     document.getElementById('tablePendingBody').innerHTML=pending.map(x=>memberRow(x,false)).join('')||'<tr><td colspan="5" class="muted">這桌目前都已報到</td></tr>';
+     const veg=rows.filter(x=>['素食','蛋奶素','全素'].includes(String(x.meal_preference||x.meal||'').trim())).length;
+     const vegChecked=checked.filter(x=>['素食','蛋奶素','全素'].includes(String(x.meal_preference||x.meal||'').trim())).length;
+     setText('tableDetailSummary', `共 ${rows.length} 人｜已報到 ${checked.length} 人｜未報到 ${pending.length} 人｜素食 ${veg} 人（已報到 ${vegChecked} 人）`);
+     document.getElementById('tableCheckedBody').innerHTML=checked.map(x=>memberRow(x,true)).join('')||'<tr><td colspan="6" class="muted">尚無已報到人員</td></tr>';
+     document.getElementById('tablePendingBody').innerHTML=pending.map(x=>memberRow(x,false)).join('')||'<tr><td colspan="6" class="muted">這桌目前都已報到</td></tr>';
      document.getElementById('tableDetailModal').classList.add('active');
    }
 
@@ -647,10 +688,10 @@
        `${formatLabel} 共 ${Number(data.total_count)||0} 列；可匯入 <strong>${Number(data.valid_count)||0}</strong> 筆；略過 ${Number(data.skipped_count)||0} 筆。<br>`+
        `目前舊名單：${esc(oldCount)}。確認後會整批覆寫，既有報到狀態與報到時間將被清除。`;
      const rows=Array.isArray(data.rows)?data.rows:[];
-     document.getElementById('csvPreviewBody').innerHTML=rows.map(row=>`<tr>
-       <td>${esc(row.name)}</td><td>${esc(row.phone)}</td><td>${esc(row.company)}</td>
-       <td>${esc(row.job_title)}</td><td>${esc(row.seat)}</td><td>${esc(row.special_notes)}</td>
-     </tr>`).join('')||'<tr><td colspan="6" class="muted">沒有可預覽資料</td></tr>';
+      document.getElementById('csvPreviewBody').innerHTML=rows.map(row=>`<tr>
+        <td>${esc(row.name)}</td><td>${esc(row.phone)}</td><td>${esc(row.company)}</td>
+        <td>${esc(row.job_title)}</td><td>${esc(row.industry_category||'未分類')}</td><td>${esc(row.meal_preference||'不用餐')}</td><td>${esc(row.seat)}</td><td>${esc(row.special_notes)}</td>
+      </tr>`).join('')||'<tr><td colspan="8" class="muted">沒有可預覽資料</td></tr>';
      document.getElementById('csvPreviewPanel').style.display='block';
    }
 
@@ -829,8 +870,9 @@
 
    async function submitAddRegistration() {
      const portrait=document.getElementById('addPortrait').checked;
-     const data= { admin:currentAdmin, sheet:currentSheet, name:addName.value.trim(), phone:addPhone.value.trim(), company:addCompany.value.trim(), job_title:addTitle.value.trim(), seat:addSeat.value.trim()||'現場安排', portrait_consent:portrait, portrait_consent_status:portrait?'同意':'不同意' };
-     if(!data.name||!data.phone)return alert('請完整填寫姓名與手機');
+      const data= { admin:currentAdmin, sheet:currentSheet, name:addName.value.trim(), phone:addPhone.value.trim(), company:addCompany.value.trim(), job_title:addTitle.value.trim(), industry_category:addIndustry.value.trim(), meal_preference:addMeal.value, seat:addSeat.value.trim(), portrait_consent:portrait, portrait_consent_status:portrait?'同意':'不同意' };
+      if(!data.name||!data.phone)return alert('請完整填寫姓名與手機');
+      if(!data.seat)return alert('桌次請由工作人員填寫；尚未安排時請填「待分桌」');
      const d=await send(`${API_BASE}/registrations/add`, 'POST', data);
      if(!d.success)return alert(d.message||'報到失敗');
      closeAddModal(); await updateDashboard(); signalDashboard(); toast('臨時報到成功');

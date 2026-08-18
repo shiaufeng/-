@@ -163,6 +163,8 @@ def ensure_core_tables(conn):
                 job_title VARCHAR(255),
                 region VARCHAR(255),
                 training_level VARCHAR(255),
+                industry_category VARCHAR(255),
+                meal_preference VARCHAR(80),
                 seat VARCHAR(100),
                 seating_chart VARCHAR(100),
                 status VARCHAR(40) DEFAULT 'pending',
@@ -233,6 +235,13 @@ def ensure_core_tables(conn):
         }
         for col, spec in preview_cols.items():
             add_col(cur, 'csv_import_previews', col, spec)
+
+        registration_cols = {
+            'industry_category': 'VARCHAR(255)',
+            'meal_preference': 'VARCHAR(80)',
+        }
+        for col, spec in registration_cols.items():
+            add_col(cur, 'event_registrations', col, spec)
 
         cur.execute(
             """
@@ -381,7 +390,7 @@ MAX_XLSX_UNCOMPRESSED_BYTES = 50 * 1024 * 1024
 MAX_XLSX_MEMBER_BYTES = 20 * 1024 * 1024
 MAX_XLSX_COMPRESSION_RATIO = 100
 CSV_PREVIEW_TOKEN_TTL_SECONDS = 15 * 60
-REGISTRATION_PARSER_VERSION = 'registration-v2'
+REGISTRATION_PARSER_VERSION = 'registration-v3'
 REGISTRATION_FIELD_ALIASES = {
     'name': ['姓名', 'name', 'Name', '名字', '貴賓姓名'],
     'phone': ['手機', '電話', 'phone', 'Phone', '行動電話', '手機號碼'],
@@ -390,10 +399,12 @@ REGISTRATION_FIELD_ALIASES = {
     'job_title': ['職稱', 'title', 'job_title', '職位', 'position', 'Position'],
     'region': ['地區', '區域', 'region', 'Region'],
     'training_level': ['職階', '層級', 'training_level', 'level'],
+    'industry_category': ['產業類別', '產業', '行業類別', '行業', 'industry', 'industry_category'],
+    'meal_preference': ['葷素', '餐別', '餐飲偏好', '飲食偏好', 'meal', 'meal_preference'],
     'seat': ['桌號', '桌號/座位', '座位', '桌次', 'seat', 'Seat', 'seating_chart'],
     'special_notes': ['備註', 'notes', 'note', 'Remarks'],
 }
-REGISTRATION_TEMPLATE_HEADERS = ['姓名', '手機', 'Email', '公司名稱', '職稱', '地區', '職階', '桌號', '備註']
+REGISTRATION_TEMPLATE_HEADERS = ['姓名', '手機', 'Email', '公司名稱', '職稱', '地區', '職階', '產業類別', '葷素', '桌號', '備註']
 REGISTRATION_REQUIRED_FIELDS = {'name', 'phone', 'company'}
 
 
@@ -544,8 +555,42 @@ def normalize_table_label(value):
     return v or clean_text(value)
 
 
+def normalize_industry_category(value):
+    return clean_text(value)
+
+
+def normalize_meal_preference(value):
+    raw = clean_text(value)
+    if not raw:
+        return '不用餐'
+    key = re.sub(r'\s+', '', raw).casefold()
+    aliases = {
+        '葷': '葷食',
+        '葷食': '葷食',
+        '一般餐': '葷食',
+        '非素食': '葷食',
+        '素': '素食',
+        '素食': '素食',
+        '蛋奶素': '蛋奶素',
+        '奶蛋素': '蛋奶素',
+        '全素': '全素',
+        '純素': '全素',
+        'vegan': '全素',
+        '不用餐': '不用餐',
+        '不需餐': '不用餐',
+        '不需要餐食': '不用餐',
+        '不需餐食': '不用餐',
+        '無需餐食': '不用餐',
+    }
+    return aliases.get(key, raw)
+
+
 def status_checked(status):
     return str(status or '').lower() in ['checked_in', '已報到', '替代', 'done']
+
+
+def is_vegetarian_meal(value):
+    return normalize_meal_preference(value) in {'素食', '蛋奶素', '全素'}
 
 
 def normalize_registration(row):
@@ -558,6 +603,8 @@ def normalize_registration(row):
         'job_title': pick(normalized, REGISTRATION_FIELD_ALIASES['job_title']),
         'region': pick(normalized, REGISTRATION_FIELD_ALIASES['region']),
         'training_level': pick(normalized, REGISTRATION_FIELD_ALIASES['training_level']),
+        'industry_category': normalize_industry_category(pick(normalized, REGISTRATION_FIELD_ALIASES['industry_category'])),
+        'meal_preference': normalize_meal_preference(pick(normalized, REGISTRATION_FIELD_ALIASES['meal_preference'])),
         'seat': normalize_table_label(pick(normalized, REGISTRATION_FIELD_ALIASES['seat'])),
         'special_notes': pick(normalized, REGISTRATION_FIELD_ALIASES['special_notes']),
         'raw_data': json_dumps(row),
@@ -853,14 +900,28 @@ def public_user(row):
     seat = r.get('seat') or r.get('seating_chart') or ''
     checked_time = r.get('checked_in_at') or r.get('checkin_time')
     portrait_status = portrait_status_from_row(r)
+    original_name = clean_text(r.get('name'))
+    proxy_name = clean_text(r.get('proxy_name'))
+    is_proxy = str(r.get('status') or '').lower() == '替代' or r.get('is_original') in (0, False, '0')
+    attendance_name = proxy_name if is_proxy and proxy_name else original_name
+    meal_preference = normalize_meal_preference(r.get('meal_preference'))
     result = {
         **r,
+        'original_name': original_name,
+        'proxy_name': proxy_name,
+        'attendance_name': attendance_name,
+        'display_name': attendance_name,
+        'is_proxy': bool(is_proxy and proxy_name),
         'company': company,
         'company_name': company,
         'seat': seat,
         'table': seat,
         'seating_chart': seat,
         'job_title': r.get('job_title') or '',
+        'industry_category': r.get('industry_category') or '',
+        'industry': r.get('industry_category') or '',
+        'meal_preference': meal_preference,
+        'meal': meal_preference,
         'portrait_consent_status': portrait_status,
         'portrait_consent': True if portrait_status == '同意' else (False if portrait_status == '不同意' else None),
         'checked_in_at': checked_time.strftime('%Y-%m-%d %H:%M:%S') if hasattr(checked_time, 'strftime') else (checked_time or ''),
@@ -1530,8 +1591,8 @@ def api_registration_add():
             cur.execute(
                 """
                 INSERT INTO event_registrations
-                (admin_username, google_sheet_name, admin_user, event_key, name, phone, email, company, company_name, job_title, seat, seating_chart, status, is_original, checked_in_at, checkin_time, portrait_consent, portrait_consent_status, portrait_consent_time, special_notes, note, raw_data)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                (admin_username, google_sheet_name, admin_user, event_key, name, phone, email, company, company_name, job_title, industry_category, meal_preference, seat, seating_chart, status, is_original, checked_in_at, checkin_time, portrait_consent, portrait_consent_status, portrait_consent_time, special_notes, note, raw_data)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 """,
                 (
                     admin, sheet, admin, sheet,
@@ -1541,8 +1602,10 @@ def api_registration_add():
                     clean_text(data.get('company')),
                     clean_text(data.get('company')),
                     clean_text(data.get('job_title')),
-                    clean_text(data.get('seat')) or '現場安排',
-                    clean_text(data.get('seat')) or '現場安排',
+                    normalize_industry_category(data.get('industry_category') or data.get('industry')),
+                    normalize_meal_preference(data.get('meal_preference') or data.get('meal')),
+                    normalize_table_label(data.get('seat')) or '待分桌',
+                    normalize_table_label(data.get('seat')) or '待分桌',
                     'checked_in', 1, now, now,
                     1 if portrait_bool else 0,
                     portrait_status,
@@ -1591,6 +1654,9 @@ def api_checkin(rid):
             old = cur.fetchone()
             if not old:
                 return jsonify(success=False, message='找不到報到資料'), 404
+            updated_seat = normalize_table_label(data.get('seat')) or normalize_table_label(
+                old.get('seat') or old.get('seating_chart')
+            )
             cur.execute(
                 """
                 UPDATE event_registrations
@@ -1602,7 +1668,9 @@ def api_checkin(rid):
                     checkin_time=%s,
                     portrait_consent=%s,
                     portrait_consent_status=%s,
-                    portrait_consent_time=%s
+                    portrait_consent_time=%s,
+                    seat=%s,
+                    seating_chart=%s
                 WHERE id=%s AND admin_username=%s AND google_sheet_name=%s
                 """,
                 (
@@ -1615,6 +1683,8 @@ def api_checkin(rid):
                     1 if portrait_bool else 0,
                     portrait_status,
                     now,
+                    updated_seat,
+                    updated_seat,
                     rid, admin, sheet,
                 ),
             )
@@ -1748,6 +1818,8 @@ def import_csv_api():
                     'email': row['email'],
                     'company': row['company'],
                     'job_title': row['job_title'],
+                    'industry_category': row['industry_category'],
+                    'meal_preference': row['meal_preference'],
                     'seat': row['seat'],
                     'special_notes': row['special_notes'],
                 }
@@ -1834,13 +1906,14 @@ def import_csv_api():
                 cur.execute(
                     """
                     INSERT INTO event_registrations
-                    (admin_username, google_sheet_name, admin_user, event_key, name, phone, email, company, company_name, job_title, region, training_level, seat, seating_chart, status, special_notes, note, raw_data)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending',%s,%s,%s)
+                    (admin_username, google_sheet_name, admin_user, event_key, name, phone, email, company, company_name, job_title, region, training_level, industry_category, meal_preference, seat, seating_chart, status, special_notes, note, raw_data)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending',%s,%s,%s)
                     """,
                     (
                         admin, sheet, admin, sheet,
                         r['name'], r['phone'], r['email'], r['company'], r['company'], r['job_title'],
-                        r['region'], r['training_level'], r['seat'], r['seat'], r['special_notes'], r['special_notes'], r['raw_data'],
+                        r['region'], r['training_level'], r['industry_category'], r['meal_preference'],
+                        r['seat'], r['seat'], r['special_notes'], r['special_notes'], r['raw_data'],
                     ),
                 )
                 inserted_count += 1
@@ -1922,11 +1995,13 @@ def export_csv_api():
             rows = [public_user(r) for r in cur.fetchall()]
         output = io.StringIO()
         writer = csv.writer(output)
-        writer.writerow(['姓名', '手機', '公司/單位', 'Email', '職稱', '桌號/座位', '報到狀態', '報到時間', '肖像權狀態', '代理人姓名', '代理人手機', '備註'])
+        writer.writerow(['原名單姓名', '實際出席姓名', '手機', '公司/單位', 'Email', '職稱', '產業類別', '葷素', '桌號/座位', '報到狀態', '報到時間', '肖像權狀態', '替代人姓名', '替代人手機', '備註'])
         for r in rows:
+            user = public_user(r)
             writer.writerow([
-                r.get('name', ''), r.get('phone', ''), r.get('company', ''), r.get('email', ''), r.get('job_title', ''),
-                r.get('seat', ''), r.get('status', ''), r.get('checkin_time', ''), r.get('portrait_consent_status', ''),
+                r.get('name', ''), user.get('attendance_name', ''), r.get('phone', ''), r.get('company', ''), r.get('email', ''), r.get('job_title', ''),
+                r.get('industry_category', ''), normalize_meal_preference(r.get('meal_preference')), r.get('seat', ''),
+                r.get('status', ''), r.get('checkin_time', ''), r.get('portrait_consent_status', ''),
                 r.get('proxy_name', ''), r.get('proxy_phone', ''), r.get('special_notes', ''),
             ])
         data = output.getvalue().encode('utf-8-sig')
@@ -1945,6 +2020,62 @@ def export_csv_api():
 # ============================================================
 # Stats
 # ============================================================
+def resolve_registration_industry(row, mappings):
+    direct = normalize_industry_category((row or {}).get('industry_category'))
+    if direct:
+        return direct
+    company = clean_text((row or {}).get('company') or (row or {}).get('company_name'))
+    company_norm = search_norm(company)
+    for item in mappings or []:
+        keyword = clean_text(item.get('keyword') or item.get('company_name') or item.get('company'))
+        if keyword and search_norm(keyword) in company_norm:
+            return clean_text(item.get('category') or item.get('industry')) or '其他'
+    return '未分類'
+
+
+def aggregate_registration_field(rows, value_getter):
+    counter = {}
+    for row in rows or []:
+        label = clean_text(value_getter(row)) or '未填'
+        counter[label] = counter.get(label, 0) + 1
+    total = sum(counter.values())
+    return [
+        {
+            'name': name,
+            'count': count,
+            'percent': round((count / total) * 100, 1) if total else 0,
+        }
+        for name, count in sorted(counter.items(), key=lambda item: (-item[1], item[0]))
+    ]
+
+
+def aggregate_checked_in_companies(rows):
+    companies = {}
+    for raw_row in rows or []:
+        if not status_checked((raw_row or {}).get('status')):
+            continue
+        row = public_user(raw_row)
+        company = clean_text(row.get('company') or row.get('company_name'))
+        if not company:
+            continue
+        key = search_norm(company)
+        item = companies.setdefault(key, {
+            'name': company,
+            'company_name': company,
+            'checked_in_count': 0,
+            'attendees': [],
+            'industries': [],
+        })
+        item['checked_in_count'] += 1
+        attendee = clean_text(row.get('display_name') or row.get('name'))
+        if attendee and attendee not in item['attendees']:
+            item['attendees'].append(attendee)
+        industry = normalize_industry_category(row.get('industry_category'))
+        if industry and industry not in item['industries']:
+            item['industries'].append(industry)
+    return sorted(companies.values(), key=lambda item: (-item['checked_in_count'], item['name']))
+
+
 @app.route('/api/dashboard_stats')
 def dashboard_stats():
     admin, sheet = q_event()
@@ -1970,16 +2101,19 @@ def dashboard_stats():
             cur.execute(
                 """
                 SELECT id, name, phone, email, company, company_name, job_title,
+                       industry_category, meal_preference,
                        COALESCE(NULLIF(seat,''), seating_chart, '未分桌') AS seat,
-                       status, checked_in_at, checkin_time, portrait_consent_status, special_notes
+                       status, is_original, proxy_name, proxy_phone,
+                       checked_in_at, checkin_time, portrait_consent_status, special_notes
                 FROM event_registrations
                 WHERE admin_username=%s AND google_sheet_name=%s
                 ORDER BY id ASC
                 """,
                 (admin, sheet),
             )
+            roster_rows = cur.fetchall()
             table_detail_map = {}
-            for raw_row in cur.fetchall():
+            for raw_row in roster_rows:
                 row = public_user(raw_row)
                 seat_val = clean_text(row.get('seat') or '未分桌')
                 if not seat_val:
@@ -1992,30 +2126,59 @@ def dashboard_stats():
             table_details = []
             for table_val, members in sorted(table_detail_map.items(), key=lambda kv: table_sort_key(kv[0])):
                 checked_count = sum(1 for m in members if status_checked(m.get('status')))
+                vegetarian_total = sum(1 for m in members if is_vegetarian_meal(m.get('meal_preference')))
+                vegetarian_checked_in = sum(
+                    1 for m in members
+                    if status_checked(m.get('status')) and is_vegetarian_meal(m.get('meal_preference'))
+                )
                 total_count = len(members)
                 table_stats.append({
                     'table': table_val,
                     'seat': table_val,
                     'total': total_count,
                     'checked_in': checked_count,
-                    'percent': round((checked_count / total_count) * 100, 1) if total_count else 0
+                    'percent': round((checked_count / total_count) * 100, 1) if total_count else 0,
+                    'vegetarian_total': vegetarian_total,
+                    'vegetarian_checked_in': vegetarian_checked_in,
                 })
                 table_details.append({
                     'table': table_val,
                     'seat': table_val,
                     'members': members,
                     'checked_in': checked_count,
-                    'total': total_count
+                    'total': total_count,
+                    'vegetarian_total': vegetarian_total,
+                    'vegetarian_checked_in': vegetarian_checked_in,
                 })
 
+        mappings = load_industry_mappings(conn, admin, sheet)
+        checked_rows = [row for row in roster_rows if status_checked(row.get('status'))]
+        checked_in_companies = aggregate_checked_in_companies(roster_rows)
+        industry_stats = {
+            'all': aggregate_registration_field(
+                roster_rows, lambda row: resolve_registration_industry(row, mappings)
+            ),
+            'checked_in': aggregate_registration_field(
+                checked_rows, lambda row: resolve_registration_industry(row, mappings)
+            ),
+        }
+        meal_stats = {
+            'all': aggregate_registration_field(
+                roster_rows, lambda row: normalize_meal_preference(row.get('meal_preference'))
+            ),
+            'checked_in': aggregate_registration_field(
+                checked_rows, lambda row: normalize_meal_preference(row.get('meal_preference'))
+            ),
+        }
         logs = get_logs(conn, admin, sheet, 25, checked_only=True)
-        industry_logs = get_logs(conn, admin, sheet, None, checked_only=True)
         return jsonify(success=True, stats={
             'total': total,
             'checked_in': checked,
             'not_checked_in': max(total - checked, 0),
             'logs': logs,
-            'industry_logs': [{'company': r.get('company', ''), 'name': r.get('name', '')} for r in industry_logs],
+            'industry_stats': industry_stats,
+            'meal_stats': meal_stats,
+            'checked_in_companies': checked_in_companies,
             'table_stats': table_stats,
             'table_details': table_details,
         })

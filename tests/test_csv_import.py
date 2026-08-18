@@ -274,6 +274,28 @@ class CsvImportTests(unittest.TestCase):
         self.assertEqual(parsed['rows'][0]['seat'], '12')
         self.assertEqual(parsed['rows'][0]['special_notes'], '素食,不吃香菜')
 
+    def test_parser_imports_industry_and_meal_from_csv_and_xlsx(self):
+        csv_raw = (
+            '姓名,手機,公司名稱,產業類別,葷素,桌次\r\n'
+            '王小明,0912345678,範例公司,資訊科技,素,第12桌\r\n'
+            '林美華,0922000111,另一公司,專業服務,,第8桌\r\n'
+        ).encode('utf-8')
+        csv_rows = server.parse_registration_csv(csv_raw)['rows']
+        csv_row = csv_rows[0]
+        self.assertEqual(csv_row['industry_category'], '資訊科技')
+        self.assertEqual(csv_row['meal_preference'], '素食')
+        self.assertEqual(csv_row['seat'], '12')
+        self.assertEqual(csv_rows[1]['meal_preference'], '不用餐')
+
+        xlsx_raw = make_xlsx(
+            headers=['姓名', '手機', '公司名稱', '產業', '餐飲偏好', '桌號'],
+            rows=[['陳美玲', '0987654321', '測試科技', '專業服務', '蛋奶素', 'A桌']],
+        )
+        xlsx_row = server.parse_registration_upload(xlsx_raw, 'people.xlsx')['rows'][0]
+        self.assertEqual(xlsx_row['industry_category'], '專業服務')
+        self.assertEqual(xlsx_row['meal_preference'], '蛋奶素')
+        self.assertEqual(xlsx_row['seat'], 'A')
+
     def test_parser_accepts_spaced_headers_cp950_and_export_headers(self):
         spaced = ' 姓名 , 手機 ,公司名稱\r\n王小明,0912345678,範例公司\r\n'.encode('cp950')
         self.assertEqual(server.parse_registration_csv(spaced)['valid_count'], 1)
@@ -571,7 +593,7 @@ class CsvImportTests(unittest.TestCase):
         self.assertTrue(response.data.startswith(b'\xef\xbb\xbf'))
         self.assertIn('text/csv', response.content_type)
         self.assertIn('attachment', response.headers['Content-Disposition'])
-        header = response.data + '王小明,0912345678,,範例公司,,,,,\r\n'.encode('utf-8')
+        header = response.data + '王小明,0912345678,,範例公司,,,,資訊科技,素食,12,\r\n'.encode('utf-8')
         self.assertEqual(server.parse_registration_csv(header)['valid_count'], 1)
 
     def test_utf16_and_oversized_files_are_rejected_before_database(self):
@@ -588,19 +610,57 @@ class CsvImportTests(unittest.TestCase):
                     )
                 self.assertEqual(response.status_code, expected_status)
 
-    def test_frontend_initializes_config_and_identity_before_automatic_checkin(self):
+    def test_frontend_shows_imported_meal_and_table_without_meal_selection(self):
         frontend = Path(server.app.root_path, '活動報到系統.html').read_text(encoding='utf-8')
         self.assertIn('async function loadSystemConfig()', frontend)
         self.assertIn('await loadSystemConfig();', frontend)
-        self.assertIn("if (systemConfig.show_meal_options === false)", frontend)
-
         render_start = frontend.index('async function renderMealOptions()')
-        auto_checkin = frontend.index("await submitCheckin('不需要')", render_start)
-        self.assertLess(frontend.index('window.isOriginal = true;', render_start), auto_checkin)
+        render_end = frontend.index('function toggleIdentity', render_start)
+        confirmation_source = frontend[render_start:render_end]
+        self.assertNotIn("selectMeal(this", confirmation_source)
+        self.assertNotIn("submitCheckin('不需要')", confirmation_source)
+        self.assertIn("selectedUser.meal_preference", confirmation_source)
+        self.assertIn("selectedUser.seat", confirmation_source)
+        self.assertIn('id="proxySeat"', confirmation_source)
+        self.assertIn('由工作人員填寫', confirmation_source)
         self.assertIn("const isOriginal = window.isOriginal !== false;", frontend)
         self.assertIn("const proxyNameEl = document.getElementById('proxyName');", frontend)
+        self.assertIn("const proxySeatEl = document.getElementById('proxySeat');", frontend)
+        self.assertIn('✓ 工作人員確認', frontend)
         self.assertIn('onsubmit="event.preventDefault(); handleAction();"', frontend)
         self.assertIn('<button type="submit" class="ck-btn"', frontend)
+
+    def test_proxy_public_user_keeps_original_and_exposes_attendance_name(self):
+        user = server.public_user({
+            'name': '原主管', 'proxy_name': '替代主管', 'proxy_phone': '0900111222',
+            'status': '替代', 'is_original': 0, 'seat': '第3桌', 'meal_preference': '素食',
+        })
+        self.assertEqual(user['name'], '原主管')
+        self.assertEqual(user['original_name'], '原主管')
+        self.assertEqual(user['display_name'], '替代主管')
+        self.assertEqual(user['attendance_name'], '替代主管')
+        self.assertTrue(user['is_proxy'])
+
+    def test_checked_in_companies_only_include_checked_status_and_merge_duplicates(self):
+        rows = [
+            {'name': '甲', 'company': '範例公司', 'status': 'checked_in', 'industry_category': '科技'},
+            {'name': '乙', 'company': '範例公司', 'status': '替代', 'proxy_name': '乙代理', 'industry_category': '科技'},
+            {'name': '丙', 'company': '尚未公司', 'status': 'pending', 'industry_category': '服務'},
+            {'name': '丁', 'company': '', 'status': 'checked_in'},
+        ]
+        companies = server.aggregate_checked_in_companies(rows)
+        self.assertEqual(len(companies), 1)
+        self.assertEqual(companies[0]['name'], '範例公司')
+        self.assertEqual(companies[0]['checked_in_count'], 2)
+        self.assertEqual(companies[0]['attendees'], ['甲', '乙代理'])
+
+    def test_frontend_keeps_checkin_method_but_uses_boarding_terms_elsewhere(self):
+        source = Path('活動報到系統.html').read_text(encoding='utf-8')
+        self.assertIn('請 選 擇 登 機 方 式', source)
+        remaining = source.replace('請 選 擇 登 機 方 式', '')
+        self.assertNotRegex(remaining, r'登\s*機')
+        self.assertIn('onclick="returnFromProducts()"', source)
+        self.assertIn("showProducts('success')", source)
 
     def test_config_defaults_to_showing_meal_options(self):
         config = server.serialize_config(

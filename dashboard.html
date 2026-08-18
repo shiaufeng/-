@@ -15,13 +15,15 @@
 }
 :root {
   --bg:#020c1b;
-  --panel:rgba(5, 16, 36, .82);
-  --cyan:#00e5ff;
+  --panel:rgba(5, 16, 36, .96);
+  --accent:#facc15;
+  --info:#60a5fa;
+  --cyan:var(--accent);
   --green:#4ade80;
-  --border:rgba(0, 229, 255, .14);
-  --text:#ddeeff;
-  --muted:rgba(180, 210, 240, .58);
-  --glow:0 0 22px rgba(0, 229, 255, .32)
+  --border:rgba(96, 165, 250, .35);
+  --text:#f8fafc;
+  --muted:var(--info);
+  --glow:none
 }
 html, body {
   width:100%;
@@ -92,13 +94,13 @@ body::after {
 }
 .brand-name {
   font-family:"Michroma", sans-serif;
-  font-size:.88rem;
+  font-size:1.15rem;
   letter-spacing:4px;
   color:var(--cyan);
   text-shadow:var(--glow)
 }
 .brand-sub {
-  font-size:.65rem;
+  font-size:1rem;
   color:var(--muted);
   letter-spacing:2px;
   margin-top:2px
@@ -109,7 +111,7 @@ body::after {
   min-width:0
 }
 .hdr-event {
-  font-size:1rem;
+  font-size:1.35rem;
   font-weight:900;
   letter-spacing:2px;
   color:#fff;
@@ -118,10 +120,10 @@ body::after {
 }
 .hdr-en {
   font-family:"Michroma", sans-serif;
-  font-size:.72rem;
+  font-size:1.05rem;
   letter-spacing:5px;
   color:var(--cyan);
-  opacity:.65;
+  opacity:1;
   margin-bottom:6px
 }
 .hdr-zh {
@@ -135,7 +137,7 @@ body::after {
   line-height:1.1
 }
 .hdr-dates {
-  font-size:.6rem;
+  font-size:1rem;
   color:var(--muted);
   letter-spacing:2px;
   margin-top:2px
@@ -198,13 +200,13 @@ body::after {
 }
 .b-tag {
   font-family:"Michroma", sans-serif;
-  font-size:.6rem;
+  font-size:1rem;
   letter-spacing:3px;
   color:var(--muted);
   white-space:nowrap
 }
 .b-label {
-  font-size:.82rem;
+  font-size:1.2rem;
   letter-spacing:4px;
   color:var(--cyan);
   font-weight:900;
@@ -251,7 +253,7 @@ body::after {
   flex-shrink:0
 }
 .panel-title {
-  font-size:.86rem;
+  font-size:1.25rem;
   font-weight:900;
   letter-spacing:2px;
   color:var(--text);
@@ -261,7 +263,7 @@ body::after {
 }
 .panel-en {
   font-family:"Michroma", sans-serif;
-  font-size:.58rem;
+  font-size:1rem;
   letter-spacing:2px;
   color:var(--muted)
 }
@@ -305,7 +307,7 @@ body::after {
 }
 .donut-lbl {
   margin-top:.25rem;
-  font-size:.78rem;
+  font-size:1.1rem;
   color:var(--muted);
   letter-spacing:2px
 }
@@ -359,14 +361,15 @@ body::after {
 .ag-time {
   font-family:"Michroma", sans-serif;
   color:var(--cyan);
-  font-size:.75rem
+  font-size:1.1rem
 }
 .ag-title {
   font-weight:900;
-  color:#fff
+  color:#fff;
+  font-size:1.2rem
 }
 .ag-desc {
-  font-size:.82rem;
+  font-size:1.1rem;
   color:var(--muted);
   margin-top:.15rem
 }
@@ -386,6 +389,11 @@ body::after {
   background:rgba(255, 255, 255, .03);
   min-width:0
 }
+.enterprise-card.checked-company-card {
+  grid-template-columns:1fr;
+  border-left:5px solid var(--accent);
+  padding:1.15rem 1.3rem
+}
 .enterprise-img {
   width:86px;
   height:62px;
@@ -403,7 +411,7 @@ body::after {
 }
 .enterprise-desc {
   color:var(--muted);
-  font-size:.78rem;
+  font-size:1.05rem;
   display:-webkit-box;
   -webkit-line-clamp:2;
   -webkit-box-orient:vertical;
@@ -418,7 +426,7 @@ body::after {
   display:flex;
   justify-content:space-between;
   color:var(--muted);
-  font-size:.68rem;
+  font-size:1rem;
   letter-spacing:2px;
   gap:1rem
 }
@@ -603,7 +611,7 @@ img, svg, canvas {
      </div>
      <div>
       <div class="brand-name">
-       SMART WISDOM ARK
+       智匯方舟
       </div>
       <div class="brand-sub">
        智慧方舟 · 大會投影看板
@@ -615,7 +623,7 @@ img, svg, canvas {
       2026 全球面對面
      </div>
      <div class="hdr-en" id="hdr-en">
-      GLOBAL FACE TO FACE
+      全球面對面
      </div>
      <div class="hdr-zh" id="hdr-zh">
       世代共榮的數位聚合
@@ -628,7 +636,7 @@ img, svg, canvas {
      <div class="live-pill">
       <span class="live-dot">
       </span>
-      LIVE
+      即時更新
      </div>
      <div class="clock" id="clock">
       --:--:--
@@ -639,13 +647,13 @@ img, svg, canvas {
   <div class="banner">
    <div class="banner-inner">
     <span class="b-tag">
-     智匯方舟 | SMART WISDOM ARK
+     智匯方舟｜活動即時資訊
     </span>
     <span class="b-label" id="b-mid">
-     2026 全球面對面 · GLOBAL FACE TO FACE
+     2026 全球面對面
     </span>
     <span class="b-tag">
-     智匯方舟 | SMART WISDOM ARK
+     智匯方舟｜活動即時資訊
     </span>
    </div>
   </div>
@@ -656,7 +664,7 @@ img, svg, canvas {
       🌐 實時登艦產業生態分佈
      </div>
      <span class="panel-en">
-      INDUSTRY ECOSYSTEM
+      產業生態分布
      </span>
     </div>
     <div class="panel-body">
@@ -689,7 +697,7 @@ img, svg, canvas {
       🗓 大會時空座標 · 議程
      </div>
      <span class="panel-en">
-      CONFERENCE TIMELINE
+      活動議程時間軸
      </span>
     </div>
     <div class="panel-body">
@@ -703,16 +711,16 @@ img, svg, canvas {
    <section class="panel" style="grid-column:1/-1">
     <div class="panel-head">
      <div class="panel-title">
-      🏢 今日參與企業
+      🏢 今日已報到企業
      </div>
      <span class="panel-en">
-      PARTNER DIRECTORY
+      即時報到企業名錄
      </span>
     </div>
     <div class="panel-body">
      <div class="enterprise-list" id="enterprise-list">
       <div class="empty">
-       載入參與企業中…
+       載入已報到企業中…
       </div>
      </div>
     </div>
@@ -720,7 +728,7 @@ img, svg, canvas {
   </main>
   <footer class="ftr">
    <span id="ftr-l">
-    SMART ARK CONTROL TERMINAL © 2026 智匯方舟
+    智匯方舟活動中控 © 2026
    </span>
    <span id="ftr-r">
     ● CONNECTING…
@@ -732,7 +740,7 @@ let SHEET=UP.get('sheet')||'';
 const ADMIN=UP.get('admin')||'admin';
 const API='/api';
 const PALETTE=['#00E5FF', '#FF2D95', '#FFD600', '#00E676', '#7C4DFF', '#FF6D00', '#40C4FF', '#FF5252', '#C6FF00', '#B388FF', '#69F0AE', '#FFAB40'];
-let cfg=null, lastFingerprint=-1, channel=null;
+let cfg=null, latestStats={}, lastFingerprint=-1, channel=null;
 function enc(v) {
   return encodeURIComponent(v||'')
 }
@@ -819,14 +827,14 @@ function applyHeader() {
   const eventName=cleanTitle(cfg.event_title||cfg.exp_event_title||cfg.google_sheet_name||SHEET);
   const subtitle=cfg.projection_title||cfg.event_subtitle||cfg.projection_subtitle||cfg.exp_event_subtitle||'世代共榮的數位聚合';
   setText('hdr-event', eventName);
-  setText('hdr-en', 'GLOBAL FACE TO FACE');
+  setText('hdr-en', '全球面對面');
   setText('hdr-zh', subtitle);
   const ds=cfg.date_start||cfg.event_date_start||cfg.exp_event_date_start||'';
   const de=cfg.date_end||cfg.event_date_end||cfg.exp_event_date_end||'';
   setText('hdr-dates', ds||de?`${ds}${de?' ─ '+de:''}`:'');
-  setText('b-mid', `${eventName} · GLOBAL FACE TO FACE`);
+  setText('b-mid', `${eventName}｜全球面對面`);
   const brand=cfg.brand_name||cfg.exp_brand_name||'智匯方舟';
-  setText('ftr-l', `SMART ARK CONTROL TERMINAL © 2026 ${brand}`)
+  setText('ftr-l', `${brand}活動中控 © 2026`)
 }
 async function poll(force=false) {
   try {
@@ -835,20 +843,21 @@ async function poll(force=false) {
     const s=d.stats|| {
 
     };
-    setText('donut-num', '100%');
-    setText('donut-lbl', '產業分佈');
-    const src=s.industry_logs||s.logs||[];
-    const fp=JSON.stringify([s.total||0, s.checked_in||0, src.length, src.map(x=>x.company||x.company_name||'').join('|')]);
+    latestStats=s;
+    setText('donut-num', `${Number(s.checked_in)||0}/${Number(s.total)||0}`);
+    setText('donut-lbl', '已報到／總名單');
+    const src=s.industry_stats?.checked_in||s.industry_logs||s.logs||[];
+    const fp=JSON.stringify([s.total||0, s.checked_in||0, src]);
     if(force||fp!==lastFingerprint) {
       lastFingerprint=fp;
       buildDonut(src)
     }
     renderAgenda();
     renderEnterprises();
-    setStatus('● LIVE', '#4ade80')
+    setStatus('● 即時更新', '#4ade80')
   }
   catch(e) {
-    setStatus('● OFFLINE', '#f87171')
+    setStatus('● 連線中斷', '#f87171')
   }
 
 }
@@ -873,7 +882,9 @@ function buildDonut(logs) {
 
   };
   (logs||[]).forEach(log=> {
-    const cat=findCat(log.company||log.company_name); counter[cat]=(counter[cat]||0)+1
+    const hasAggregate=Number.isFinite(Number(log.count))&&Boolean(log.name);
+    const cat=hasAggregate?String(log.name):findCat(log.company||log.company_name);
+    counter[cat]=(counter[cat]||0)+(hasAggregate?Number(log.count):1)
   });
   if(!Object.keys(counter).length) {
     drawDonut([ {
@@ -883,11 +894,21 @@ function buildDonut(logs) {
     return
   }
   const total=Object.values(counter).reduce((a, b)=>a+b, 0)||1;
-  const segs=Object.entries(counter).sort((a, b)=>b[1]-a[1]).map(([name, count], i)=>({
-    name, count, pct:+(count/total*100).toFixed(1), color:PALETTE[i%PALETTE.length]
+  let entries=Object.entries(counter).sort((a, b)=>b[1]-a[1]);
+  if(entries.length>7) {
+    const rest=entries.slice(6).reduce((sum, item)=>sum+item[1],0);
+    entries=[...entries.slice(0,6),['其他',rest]]
+  }
+  const segs=entries.map(([name, count])=>({
+    name, count, pct:+(count/total*100).toFixed(1), color:categoryColor(name)
   }));
   drawDonut(segs);
   drawLegend(segs)
+}
+function categoryColor(name) {
+  let hash=0;
+  for(const ch of String(name||''))hash=(hash*31+ch.charCodeAt(0))>>>0;
+  return PALETTE[hash%PALETTE.length]
 }
 function drawDonut(segs) {
   const svg=document.getElementById('donut-svg');
@@ -942,12 +963,17 @@ function renderAgenda() {
 }
 function renderEnterprises() {
   const box=document.getElementById('enterprise-list');
-  const rows=cfg?.exhibitors||cfg?.partners||[];
+  const rows=latestStats?.checked_in_companies||[];
   if(!rows.length) {
-    box.innerHTML='<div class="empty">後台尚未設定參與企業</div>';
+    box.innerHTML='<div class="empty">目前尚無企業完成報到</div>';
     return
   }
-  box.innerHTML=rows.map(e=>`<div class="enterprise-card"><img class="enterprise-img" src="${esc(e.image_url||e.logo||'')}" onerror="this.style.display='none'"><div><div class="enterprise-name">${esc(e.name||e.company_name||'參與企業')}</div><div class="enterprise-desc">${esc(e.description||e.industry||'')}</div></div></div>`).join('')
+  box.innerHTML=rows.map(e=>{
+    const attendees=Array.isArray(e.attendees)?e.attendees:[];
+    const industries=Array.isArray(e.industries)?e.industries:[];
+    const details=[`已報到 ${Number(e.checked_in_count)||0} 人`, industries.length?`產業：${industries.join('、')}`:'', attendees.length?`出席：${attendees.join('、')}`:''].filter(Boolean).join('｜');
+    return `<div class="enterprise-card checked-company-card"><div><div class="enterprise-name">${esc(e.name||e.company_name||'未填公司')}</div><div class="enterprise-desc">${esc(details)}</div></div></div>`
+  }).join('')
 }
   </script>
  </body>

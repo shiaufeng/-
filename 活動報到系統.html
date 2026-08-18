@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>智匯方舟 - 航空登機系統</title>
+  <title>智匯方舟 - 活動登艦系統</title>
   <link rel="stylesheet" href="/smart-ark-theme.css?v=13">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; font-family: "PingFang TC", "Michroma", "Stick", sans-serif; }
@@ -88,6 +88,29 @@
     body.is-mobile-view .ark-background { background: linear-gradient(rgba(6, 26, 24, 0.16), rgba(6, 26, 24, 0.74)), url("/smart-ark-mobile-bg.png") center top / cover no-repeat !important; opacity: 1 !important; }
     body.is-mobile-view #splash-screen { background: linear-gradient(rgba(6, 26, 24, 0.10), rgba(6, 26, 24, 0.70)), url("/smart-ark-mobile-bg.png") center top / cover no-repeat !important; }
     body.is-mobile-view #methodSelectionState { margin-top: 18vh; }
+    /* 高齡友善：前台主要資訊不低於 18px，操作區維持足夠觸控高度。 */
+    html { font-size: 18px; }
+    body { font-size: 1rem; }
+    .form-card label, .form-card small, .group-item, .ark-success-subtitle,
+    .ark-terminal-subtitle, .ark-meta-label, .ark-meta-value, .ark-card-title,
+    .ark-card-sub, .portrait-consent-check, .portrait-consent-link,
+    .portrait-consent-card p, #productState p { font-size: 1rem !important; }
+    .cyber-input, .ck-btn, .ck-btn-pill, .ck-tag { font-size: 1.05rem !important; min-height: 50px; }
+    .ark-user-greeting { font-size: 1.25rem; }
+    .ark-success-title { font-size: 1.35rem; }
+    .ark-meta-value { font-size: 1.1rem !important; }
+    .ark-card-title { font-size: 1.1rem !important; }
+    @media(max-width: 768px) {
+      html { font-size: 18px; }
+      .header-container { flex-wrap: wrap; }
+      .header-action-buttons { width: 100%; justify-content: center; flex-wrap: wrap; }
+      .header-action-buttons .ck-btn-pill, .header-title-text { font-size: 1rem !important; }
+      .verify-card h3 { font-size: 1.25rem; }
+      .click-hint { font-size: 22px !important; }
+    }
+    @media(max-width: 400px) {
+      .header-action-buttons .ck-btn-pill, .header-title-text { font-size: .95rem !important; }
+    }
   </style>
 </head>
 
@@ -138,14 +161,14 @@
     <div id="actionState" class="state-hidden">
       <button class="btn-back-nav" onclick="setAppState('methodSelection')">← 重新選擇方式</button>
       <form class="form-card cyber-card" onsubmit="event.preventDefault(); handleAction();">
-        <h2 id="actionTitle" class="neon-text" style="margin-bottom: 2.5rem; font-size: 2.2rem;">登 機 驗 證</h2>
+        <h2 id="actionTitle" class="neon-text" style="margin-bottom: 2.5rem; font-size: 2.2rem;">登 艦 驗 證</h2>
         <input type="text" id="actionInput" class="cyber-input" placeholder="請輸入您的資料">
         <button type="submit" class="ck-btn" style="letter-spacing:3px;">🔍 開 始 驗 證</button>
       </form>
 
       <div id="tempRegistrationSection" class="form-card cyber-card state-hidden" style="margin-top: 2.5rem; border: 1px solid #f59e0b !important; box-shadow: 0 0 25px rgba(245, 158, 11, 0.2); text-align: left;">
         <h3 style="color: #fbbf24; font-size: 1.25rem; margin-bottom: 1.5rem; text-shadow: 0 0 10px rgba(245,158,11,0.3); font-weight: bold; text-align: center; line-height: 1.4;">
-          ⚠️ 查無此旅客登機紀錄！<br>是否開啟現場補位功能？
+          ⚠️ 查無此旅客登艦紀錄！<br>是否開啟現場補位功能？
         </h3>
         <div style="margin-bottom: 1.2rem;">
           <label style="color: #fbbf24; display: block; margin-bottom: 0.5rem; font-size: 0.9rem; font-weight: bold;">請輸入姓名 *</label>
@@ -159,12 +182,21 @@
           <label style="color: rgba(236,254,255,0.64); display: block; margin-bottom: 0.5rem; font-size: 0.9rem;">服務單位 / 公司名稱</label>
           <input type="text" id="addCompany" class="cyber-input" placeholder="請輸入公司名稱" style="margin-bottom: 0;">
         </div>
+        <div style="margin-bottom: 1.2rem;">
+          <label for="addSeat" style="color: #fbbf24; display: block; margin-bottom: 0.5rem; font-size: 0.9rem; font-weight: bold;">桌次 *</label>
+          <input type="text" id="addSeat" class="cyber-input" placeholder="請詢問工作人員" aria-describedby="addSeatHelp" style="margin-bottom: 0;">
+          <small id="addSeatHelp" style="display:block;color:rgba(236,254,255,0.68);margin-top:.4rem;">由工作人員填寫；尚未安排時請填「待分桌」</small>
+        </div>
+        <div style="margin-bottom: 1.2rem;">
+          <label for="addIndustry" style="color: rgba(236,254,255,0.64); display: block; margin-bottom: 0.5rem; font-size: 0.9rem;">產業類別（選填）</label>
+          <input type="text" id="addIndustry" class="cyber-input" placeholder="由工作人員依現場資料填寫" style="margin-bottom: 0;">
+        </div>
         <div style="margin-bottom: 1.5rem;">
           <label style="color: rgba(236,254,255,0.64); display: block; margin-bottom: 0.5rem; font-size: 0.9rem;">當日餐飲偏好</label>
           <div id="tempMealRadioGroup" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.8rem;">
             <button type="button" class="verify-card cyber-card meal-opt-temp temp-meal-selected" data-meal="葷食" onclick="selectTempMeal(this, '葷食')" style="padding: 1rem 0.5rem; font-size: 0.95rem; font-weight: bold; border-radius: 0.5rem;">🥩 葷食</button>
             <button type="button" class="verify-card cyber-card meal-opt-temp" data-meal="素食" onclick="selectTempMeal(this, '素食')" style="padding: 1rem 0.5rem; font-size: 0.95rem; font-weight: bold; border-radius: 0.5rem;">🥬 素食</button>
-            <button type="button" class="verify-card cyber-card meal-opt-temp" data-meal="不需餐食" onclick="selectTempMeal(this, '不需餐食')" style="padding: 1rem 0.5rem; font-size: 0.95rem; font-weight: bold; border-radius: 0.5rem;">❌ 不需餐食</button>
+            <button type="button" class="verify-card cyber-card meal-opt-temp" data-meal="不用餐" onclick="selectTempMeal(this, '不用餐')" style="padding: 1rem 0.5rem; font-size: 0.95rem; font-weight: bold; border-radius: 0.5rem;">❌ 不用餐</button>
           </div>
         </div>
         <div class="portrait-consent-box" style="margin-bottom:1.5rem;">
@@ -175,7 +207,7 @@
           <button type="button" class="portrait-consent-link" onclick="openPortraitConsentModal()">📄 查看完整條款（含不同意選項）</button>
         </div>
         <div style="display: flex; gap: 1rem; margin-top: 0;">
-          <button class="ck-btn ck-btn-warn" onclick="submitAddRegistration()" style="margin-top:0;">✓ 確認外加報到</button>
+          <button class="ck-btn ck-btn-warn" onclick="submitAddRegistration()" style="margin-top:0;">✓ 工作人員確認</button>
           <button class="ck-btn ck-btn-ghost" onclick="hideTempSection()" style="margin-top:0;">取消</button>
         </div>
       </div>
@@ -192,9 +224,9 @@
     <div id="mealState" class="state-hidden">
       <button class="btn-back-nav" onclick="resetToHome()">← 取消</button>
       <div class="form-card cyber-card">
-        <h2 class="neon-text" style="margin-bottom:2rem;">🍽️ 機 上 餐 飲 偏 好</h2>
+        <h2 class="neon-text" style="margin-bottom:2rem;">✅ 報 到 資 料 確 認</h2>
         <div id="mealOptions"></div>
-        <button id="finalBtn" class="ck-btn ck-btn-confirm" disabled onclick="submitCheckin()">✈️ 確 認 並 核 發 登 機 證</button>
+        <button id="finalBtn" class="ck-btn ck-btn-confirm" disabled onclick="submitCheckin()">✈️ 確 認 並 核 發 登 艦 證</button>
       </div>
     </div>
 
@@ -205,12 +237,12 @@
             <div class="ark-brand-kicker">
               <div>
                 <div>方舟終端機</div>
-                <div>ARK TERMINAL</div>
+                <div>登艦資訊</div>
               </div>
               <div class="ark-logo-mark">⚓</div>
             </div>
             <div class="ark-terminal-title">智匯方舟</div>
-            <div class="ark-terminal-subtitle">SMART WISDOM ARK｜世代共榮的數位聚合</div>
+            <div class="ark-terminal-subtitle">智匯方舟｜世代共榮的數位聚合</div>
             <div id="arkGreeting" class="ark-user-greeting">
               <div id="arkSuccessMainTitle" class="ark-success-title">報到成功</div>
               <div id="arkGreetingText">您好</div>
@@ -263,7 +295,7 @@
     <div id="productState" class="state-hidden">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3rem;">
         <h1 class="neon-text" style="font-size: 2.2rem;">🛍️ 活 動 商 品 專 區</h1>
-        <button class="ck-btn-pill ck-btn-ghost" onclick="resetToHome()">← 返 回</button>
+        <button class="ck-btn-pill ck-btn-ghost" onclick="returnFromProducts()">← 返回上一頁</button>
       </div>
       <div id="giftsSection" class="state-hidden">
         <h2 class="neon-text" style="margin-bottom: 1.5rem; font-size: 1.5rem;">🎁 精 選 伴 手 禮</h2>
@@ -314,8 +346,9 @@
 
     window.allProducts = [];
     window.currentCategory = '全 部';
-    window.selectedTempMealChoice = '葷食';
+    window.selectedTempMealChoice = '';
     window.successInfoCards = [];
+    window.productReturnState = 'methodSelection';
 
     const DEFAULT_SUCCESS_CARD = { title: '報到成功', subtitle: '歡迎登艦，請依照現場指引入座。', description: '', button_text: '', button_url: '' };
     
@@ -422,7 +455,7 @@
       const splash = document.getElementById('splash-screen');
       if (splash && splash.style.display !== 'none') splash.style.display = 'none';
       document.querySelector('.header-action-buttons').style.display = 'flex';
-      showProducts();
+      showProducts('methodSelection');
     }
 
     function setAppState(s) {
@@ -442,6 +475,18 @@
       if (splash) splash.style.display = 'none';
       const headerActions = document.querySelector('.header-action-buttons');
       if (headerActions) headerActions.style.display = 'flex';
+      setAppState('methodSelection');
+    }
+
+    async function returnFromProducts() {
+      if (window.productReturnState === 'success') {
+        if (await restoreLastCheckinState()) return;
+        if (selectedUser) {
+          renderArkTerminal(selectedUser, selectedUser.meal_preference || selectedUser.meal || '');
+          setAppState('success');
+          return;
+        }
+      }
       setAppState('methodSelection');
     }
 
@@ -474,7 +519,8 @@
         name: document.getElementById('addName').value.trim(),
         phone: document.getElementById('addPhone').value.trim(),
         company: document.getElementById('addCompany').value.trim(),
-        seat: '工作人員現場安排',
+        seat: document.getElementById('addSeat').value.trim(),
+        industry_category: document.getElementById('addIndustry').value.trim(),
         meal: window.selectedTempMealChoice,
         meal_preference: window.selectedTempMealChoice,
         portrait_consent: portraitConsent,
@@ -485,6 +531,7 @@
       };
 
       if (!data.name || !data.phone) return alert('❌ 請完整填寫旅客姓名與手機欄位！');
+      if (!data.seat) return alert('❌ 桌次請由工作人員填寫；尚未安排時請填「待分桌」。');
       try {
         const res = await fetch('/api/registrations/add', {
           method: 'POST',
@@ -494,7 +541,7 @@
         const result = await res.json();
         if (result.success) {
           hideTempSection();
-          alert('🎉 臨時補單報到成功！歡迎登機。');
+          alert('🎉 臨時補單報到成功！歡迎登艦。');
           resetToHome();
         } else { alert('報到未完成：' + (result.message || '請確認名單資料')); }
       } catch(e) { alert('通訊矩陣回應異常，無法外加名單'); }
@@ -570,8 +617,10 @@
           document.getElementById('addName').value = '';
           document.getElementById('addPhone').value = '';
           document.getElementById('addCompany').value = '';
-          const defaultMealBtn = document.querySelector('#tempMealRadioGroup [data-meal="葷食"]');
-          if (defaultMealBtn) selectTempMeal(defaultMealBtn, '葷食');
+          document.getElementById('addSeat').value = '';
+          document.getElementById('addIndustry').value = '';
+          window.selectedTempMealChoice = '';
+          document.querySelectorAll('#tempMealRadioGroup .meal-opt-temp').forEach(btn => btn.classList.remove('meal-selected'));
           document.getElementById('tempRegistrationSection').classList.remove('state-hidden');
           if (searchMethod === 'company') document.getElementById('addCompany').value = val;
           else if (searchMethod === 'phone') document.getElementById('addPhone').value = val;
@@ -627,13 +676,8 @@
     async function renderMealOptions() {
       await loadSystemConfig();
       await mergeExperienceConfig();
-      window.selectedMeal = null;
       window.isOriginal = true;
       window.portraitDecided = false;
-      if (systemConfig.show_meal_options === false) {
-        await submitCheckin('不需要');
-        return;
-      }
       
       const container = document.getElementById('mealOptions');
       const name = escapeHtml(selectedUser.name || selectedUser['姓名'] || '');
@@ -642,12 +686,18 @@
       if(jobTitle === '基層') jobTitle = '';
       
       const company = escapeHtml(selectedUser.company || selectedUser['公司'] || selectedUser['公司名稱'] || '');
+      const seat = escapeHtml(selectedUser.seat || selectedUser.seating_chart || '待分桌');
+      const meal = escapeHtml(selectedUser.meal_preference || selectedUser.meal || '不用餐');
 
       container.innerHTML = `
         <div style="margin-bottom:2rem; text-align:left; padding:1.2rem; background:rgba(94,234,212,0.08); border: 1px solid rgba(94,234,212,0.2); border-radius:0.6rem;">
           <div style="font-size:0.85rem; color:rgba(94,234,212,0.76); letter-spacing:1px; margin-bottom:0.2rem;">旅 客 姓 名</div>
           <div style="font-size:1.4rem; font-weight:bold; color:#fff;">${name}${jobTitle ? `｜${jobTitle}` : ''}</div>
           <div style="font-size:0.9rem; color:rgba(236,254,255,0.58); margin-top:0.35rem;">${company}</div>
+          <div class="two-col-grid" style="margin-top:1rem;gap:.75rem;">
+            <div style="padding:.8rem;border:1px solid var(--ark-border);border-radius:.55rem;"><div style="font-size:.78rem;color:var(--ark-accent);">桌次</div><strong>${seat}</strong></div>
+            <div style="padding:.8rem;border:1px solid var(--ark-border);border-radius:.55rem;"><div style="font-size:.78rem;color:var(--ark-accent);">葷素</div><strong>${meal}</strong></div>
+          </div>
         </div>
         <div class="two-col-grid" style="margin-bottom:2rem;">
           <div id="btnOrig" class="verify-card cyber-card is-original-selected" onclick="toggleIdentity(true)" style="padding:1.2rem; font-weight:bold;">本 人 報 到</div>
@@ -656,12 +706,10 @@
         <div id="proxyForm" class="state-hidden" style="margin-bottom:2rem; text-align:left; border:1px solid rgba(245,158,11,0.4); background:rgba(245,158,11,0.03); padding:1.5rem; border-radius:0.75rem;">
           <p style="color:#fbbf24; margin-bottom:1rem; font-size:0.95rem; font-weight:bold;">請 輸 入 替 代 人 資 訊 ：</p>
           <input type="text" id="proxyName" class="cyber-input" placeholder="替代人姓名" style="margin-bottom:0.8rem; padding:0.9rem;">
-          <input type="text" id="proxyPhone" class="cyber-input" placeholder="替代人手機" style="margin-bottom:0; padding:0.9rem;">
-        </div>
-        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.8rem; margin-bottom:1.5rem;">
-          <div class="verify-card cyber-card meal-opt" onclick="selectMeal(this, '葷食')" style="padding:1.2rem 0.5rem; font-weight:bold;">🥩 葷食</div>
-          <div class="verify-card cyber-card meal-opt" onclick="selectMeal(this, '素食')" style="padding:1.2rem 0.5rem; font-weight:bold;">🥬 素食</div>
-          <div class="verify-card cyber-card meal-opt" onclick="selectMeal(this, '不需餐食')" style="padding:1.2rem 0.5rem; font-weight:bold;">❌ 不需餐食</div>
+          <input type="text" id="proxyPhone" class="cyber-input" placeholder="替代人手機" style="margin-bottom:0.8rem; padding:0.9rem;">
+          <label for="proxySeat" style="display:block;color:#fbbf24;margin-bottom:.45rem;font-weight:bold;">桌次</label>
+          <input type="text" id="proxySeat" class="cyber-input" value="${seat}" placeholder="請詢問工作人員" aria-describedby="proxySeatHelp" style="margin-bottom:0; padding:0.9rem;">
+          <small id="proxySeatHelp" style="display:block;color:rgba(236,254,255,.68);margin-top:.4rem;">由工作人員填寫；預設沿用原名單桌次</small>
         </div>
         <div class="portrait-consent-box">
           <label class="portrait-consent-check" onclick="event.preventDefault(); openPortraitConsentModal();" style="cursor:pointer;">
@@ -671,7 +719,7 @@
           <button type="button" class="portrait-consent-link" onclick="openPortraitConsentModal()">📄 查看完整條款（含不同意選項）</button>
         </div>
       `;
-      document.getElementById('finalBtn').disabled = true;
+      document.getElementById('finalBtn').disabled = false;
       setAppState('meal');
     }
 
@@ -683,14 +731,7 @@
       checkMealReady();
     }
 
-    function selectMeal(el, m) {
-      document.querySelectorAll('.meal-opt').forEach(x => x.classList.remove('meal-selected'));
-      el.classList.add('meal-selected');
-      window.selectedMeal = m;
-      checkMealReady();
-    }
-
-    function checkMealReady() { document.getElementById('finalBtn').disabled = !window.selectedMeal; }
+    function checkMealReady() { document.getElementById('finalBtn').disabled = false; }
     function openPortraitConsentModal() { document.getElementById('portraitConsentModal').classList.add('active'); }
     function closePortraitConsentModal() { document.getElementById('portraitConsentModal').classList.remove('active'); }
 
@@ -698,33 +739,34 @@
       const cb = document.getElementById('portraitConsent'); if (cb) { cb.checked = true; checkMealReady(); }
       const cbTemp = document.getElementById('portraitConsentTemp'); if (cbTemp) cbTemp.checked = true;
       window.portraitDecided = true; closePortraitConsentModal();
-      if (document.getElementById('mealState') && !document.getElementById('mealState').classList.contains('state-hidden')) submitCheckin();
     }
 
     function disagreePortraitConsent() {
       const cb = document.getElementById('portraitConsent'); if (cb) { cb.checked = false; checkMealReady(); }
       const cbTemp = document.getElementById('portraitConsentTemp'); if (cbTemp) cbTemp.checked = false;
       window.portraitDecided = true; closePortraitConsentModal();
-      if (document.getElementById('mealState') && !document.getElementById('mealState').classList.contains('state-hidden')) submitCheckin();
     }
 
-    async function submitCheckin(autoMeal) {
-      const meal = autoMeal || window.selectedMeal;
+    async function submitCheckin() {
+      const meal = selectedUser?.meal_preference || selectedUser?.meal || '';
       const consentEl = document.getElementById('portraitConsent');
-      if (!autoMeal && consentEl && !consentEl.checked && !window.portraitDecided) return openPortraitConsentModal();
+      if (consentEl && !consentEl.checked && !window.portraitDecided) return openPortraitConsentModal();
       const portraitConsent = consentEl ? consentEl.checked : false;
       const isOriginal = window.isOriginal !== false;
       const proxyNameEl = document.getElementById('proxyName');
       const proxyPhoneEl = document.getElementById('proxyPhone');
+      const proxySeatEl = document.getElementById('proxySeat');
       const proxyInfo = isOriginal ? {} : { name: (proxyNameEl?.value || '').trim(), phone: (proxyPhoneEl?.value || '').trim() };
       if (!isOriginal && !proxyInfo.name) return alert('請輸入替代人姓名');
+      const seat = isOriginal ? (selectedUser?.seat || selectedUser?.seating_chart || '') : (proxySeatEl?.value || '').trim();
+      if (!isOriginal && !seat) return alert('桌次請由工作人員填寫');
 
       const btn = document.getElementById('finalBtn');
-      btn.disabled = true; btn.innerHTML = '<span>登 機 核 對 中 ...</span>';
+      btn.disabled = true; btn.innerHTML = '<span>登 艦 資 料 核 對 中 ...</span>';
       try {
         const res = await fetch(`${API_BASE}/checkin/${selectedUser.id}?admin=${encodeURIComponent(currentAdmin)}&sheet=${encodeURIComponent(currentSheet)}`, {
           method: 'POST', headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({ meal, meal_preference: meal, is_original: isOriginal, proxy_info: proxyInfo, portrait_consent: portraitConsent, portrait_consent_status: portraitConsent ? '同意' : '不同意', image_rights_status: portraitConsent ? '同意肖像權' : '不同意肖像權' })
+          body: JSON.stringify({ seat, is_original: isOriginal, proxy_info: proxyInfo, portrait_consent: portraitConsent, portrait_consent_status: portraitConsent ? '同意' : '不同意', image_rights_status: portraitConsent ? '同意肖像權' : '不同意肖像權' })
         });
         const json = await res.json();
         if (json.success) {
@@ -732,12 +774,12 @@
           renderArkTerminal(json.data, meal);
           setAppState('success');
         } else {
-          if (json.error === 'already_done') alert('🛬 旅客已完成登機報到手續！');
-          else alert(json.message || '登機確認手續未完成');
-          btn.disabled = false; btn.innerHTML = '<span>確 認 並 核 發 登 機 證</span>';
+          if (json.error === 'already_done') alert('🛬 旅客已完成登艦報到手續！');
+          else alert(json.message || '登艦確認手續未完成');
+          btn.disabled = false; btn.innerHTML = '<span>確 認 並 核 發 登 艦 證</span>';
         }
       } catch(e) {
-        alert('網路序列傳輸異常'); btn.disabled = false; btn.innerHTML = '<span>確 認 並 核 發 登 機 證</span>';
+        alert('網路序列傳輸異常'); btn.disabled = false; btn.innerHTML = '<span>確 認 並 核 發 登 艦 證</span>';
       }
     }
 
@@ -780,14 +822,17 @@
     }
 
     function renderArkTerminal(user, meal) {
-      const name = escapeHtml(user?.name || user?.['姓名'] || selectedUser?.name || selectedUser?.['姓名'] || '貴賓');
+      const rawName = user?.display_name || user?.attendance_name || user?.proxy_name || user?.name || user?.['姓名'] || selectedUser?.display_name || selectedUser?.attendance_name || selectedUser?.proxy_name || selectedUser?.name || selectedUser?.['姓名'] || '貴賓';
+      const name = escapeHtml(rawName);
+      const originalName = escapeHtml(user?.original_name || user?.name || selectedUser?.original_name || selectedUser?.name || '');
+      const isProxy = Boolean(user?.is_proxy || user?.proxy_name || selectedUser?.is_proxy || selectedUser?.proxy_name);
       
       let jobTitle = escapeHtml(user?.job_title || user?.title || user?.position || user?.['職稱'] || selectedUser?.job_title || selectedUser?.title || selectedUser?.position || selectedUser?.['職稱'] || '');
       if(jobTitle === '基層') jobTitle = ''; // 自動濾除「基層」做為職稱的情境
 
       const company = escapeHtml(user?.company || user?.company_name || user?.['公司'] || user?.['公司名稱'] || selectedUser?.company || selectedUser?.company_name || selectedUser?.['公司'] || selectedUser?.['公司名稱'] || '智匯方舟');
-      const seat = escapeHtml(user?.seat || selectedUser?.seat || '現場安排');
-      const mealText = escapeHtml(meal || user?.meal || user?.meal_preference || selectedUser?.meal || selectedUser?.meal_preference || '未選擇');
+      const seat = escapeHtml(user?.seat || selectedUser?.seat || '待分桌');
+      const mealText = escapeHtml(user?.meal_preference || user?.meal || selectedUser?.meal_preference || selectedUser?.meal || meal || '不用餐');
 
       const eventName = escapeHtml((systemConfig && (systemConfig.event_title || systemConfig.google_sheet_name)) || currentSheet || '活動報到名單');
       const startRaw = systemConfig && (systemConfig.event_date_start || systemConfig.event_start_date || systemConfig.date_start || systemConfig.exp_event_date_start || '');
@@ -797,14 +842,15 @@
 
       document.getElementById('arkSuccessMainTitle').textContent = '報到成功';
       document.getElementById('arkSuccessSubtitle').textContent = '歡迎登艦，請依照現場指引入座。';
-      document.getElementById('arkGreetingText').innerHTML = `您好，${name}${jobTitle ? `｜${jobTitle}` : ''}`;
+      document.getElementById('arkGreetingText').innerHTML = `您好，${name}${jobTitle ? `｜${jobTitle}` : ''}${isProxy && originalName && originalName !== name ? `<div style="font-size:1rem;color:rgba(236,254,255,.72);margin-top:.35rem;">代替 ${originalName} 參加活動</div>` : ''}`;
 
       // 強制 Company 區塊不顯示職稱，符合「公司那邊不要有基層的字樣」
       document.getElementById('arkTerminalInfo').innerHTML = `
-        <div class="ark-meta-chip"><div class="ark-meta-label">Activity</div><div class="ark-meta-value">${eventName}</div></div>
-        <div class="ark-meta-chip"><div class="ark-meta-label">DATE</div><div class="ark-meta-value">${endDate ? `${startDate} ~ ${endDate}` : startDate}</div></div>
-        <div class="ark-meta-chip"><div class="ark-meta-label">COMPANY</div><div class="ark-meta-value">${company}</div></div>
-        <div class="ark-meta-chip"><div class="ark-meta-label">SEAT</div><div class="ark-meta-value">${seat}｜${mealText}</div></div>
+        <div class="ark-meta-chip"><div class="ark-meta-label">活動名稱</div><div class="ark-meta-value">${eventName}</div></div>
+        <div class="ark-meta-chip"><div class="ark-meta-label">活動日期</div><div class="ark-meta-value">${endDate ? `${startDate} ～ ${endDate}` : startDate}</div></div>
+        <div class="ark-meta-chip"><div class="ark-meta-label">公司／單位</div><div class="ark-meta-value">${company}</div></div>
+        <div class="ark-meta-chip"><div class="ark-meta-label">桌次</div><div class="ark-meta-value">${seat}</div></div>
+        <div class="ark-meta-chip"><div class="ark-meta-label">葷素</div><div class="ark-meta-value">${mealText}</div></div>
       `;
 
       applyArkBrandFromConfig();
@@ -862,7 +908,7 @@
       const url = String(card.url || '').trim();
       
       if (url === 'map') return toggleMapModal(true);
-      if (url === 'shop') return showProducts();
+      if (url === 'shop') return showProducts('success');
       if (url === 'dashboard') {
         const q = `?admin=${encodeURIComponent(currentAdmin)}&sheet=${encodeURIComponent(currentSheet)}`;
         return window.open(`/dashboard.html${q}`, '_blank', 'noopener');
@@ -872,8 +918,9 @@
       alert('資訊連結尚未設定，請至後台活動內容設定更新。');
     }
 
-    async function showProducts() {
+    async function showProducts(returnState) {
       try {
+        window.productReturnState = returnState || (document.getElementById('successState')?.classList.contains('state-hidden') ? 'methodSelection' : 'success');
         const res = await fetch(`${API_BASE}/config?admin=${encodeURIComponent(currentAdmin)}&sheet=${encodeURIComponent(currentSheet)}`);
         const config = await res.json();
         window.allProducts = config.products || [];
