@@ -23,6 +23,7 @@
   --border:rgba(96, 165, 250, .35);
   --text:#f8fafc;
   --muted:var(--info);
+  --header-height:128px;
   --glow:none
 }
 html, body {
@@ -66,8 +67,9 @@ body::after {
 .hdr-inner {
   max-width:1600px;
   margin:0 auto;
-  padding:0 1.75rem;
-  height:100px;
+  padding:.5rem 1.75rem;
+  height:auto;
+  min-height:var(--header-height);
   display:flex;
   align-items:center;
   justify-content:space-between;
@@ -108,7 +110,10 @@ body::after {
 .hdr-center {
   flex:1;
   text-align:center;
-  min-width:0
+  min-width:0;
+  display:flex;
+  flex-direction:column;
+  justify-content:center
 }
 .hdr-event {
   font-size:1.35rem;
@@ -222,7 +227,7 @@ body::after {
   display:grid;
   grid-template-columns:1fr 1fr;
   gap:1.5rem;
-  min-height:calc(100dvh - 100px - 42px - 45px);
+  min-height:calc(100dvh - var(--header-height) - 42px - 45px);
   min-width:0
 }
 .panel {
@@ -300,16 +305,10 @@ body::after {
 }
 .donut-num {
   font-family:"Michroma", sans-serif;
-  font-size:2.05rem;
+  font-size:2.35rem;
   color:#fff;
   text-shadow:var(--glow);
   line-height:1.05
-}
-.donut-lbl {
-  margin-top:.25rem;
-  font-size:1.1rem;
-  color:var(--muted);
-  letter-spacing:2px
 }
 .legend {
   display:grid;
@@ -460,7 +459,8 @@ img, svg, canvas {
     height:auto;
     min-height:88px;
     padding:.75rem 1rem;
-    gap:.65rem
+    gap:.65rem;
+    flex-wrap:wrap
   }
   .brand {
     min-width:0
@@ -678,9 +678,6 @@ img, svg, canvas {
         <div class="donut-num" id="donut-num">
          100%
         </div>
-        <div class="donut-lbl" id="donut-lbl">
-         產業分佈
-        </div>
        </div>
       </div>
       <div class="legend" id="legend">
@@ -844,8 +841,6 @@ async function poll(force=false) {
 
     };
     latestStats=s;
-    setText('donut-num', `${Number(s.checked_in)||0}/${Number(s.total)||0}`);
-    setText('donut-lbl', '已報到／總名單');
     const src=s.industry_stats?.checked_in||s.industry_logs||s.logs||[];
     const fp=JSON.stringify([s.total||0, s.checked_in||0, src]);
     if(force||fp!==lastFingerprint) {

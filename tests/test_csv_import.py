@@ -662,6 +662,21 @@ class CsvImportTests(unittest.TestCase):
         self.assertIn('onclick="returnFromProducts()"', source)
         self.assertIn("showProducts('success')", source)
 
+    def test_projection_header_fits_and_donut_stays_at_one_hundred_percent(self):
+        source = Path('dashboard.html').read_text(encoding='utf-8')
+        self.assertIn('--header-height:128px', source)
+        self.assertIn('min-height:var(--header-height)', source)
+        self.assertIn('flex-wrap:wrap', source)
+        self.assertIn('<div class="donut-num" id="donut-num">', source)
+        self.assertIn('100%', source)
+        self.assertNotIn('id="donut-lbl"', source)
+        self.assertNotIn('已報到／總名單', source)
+        self.assertNotIn("setText('donut-num'", source)
+        self.assertIn('s.industry_stats?.checked_in', source)
+        self.assertIn('buildDonut(src)', source)
+        self.assertIn('renderAgenda()', source)
+        self.assertIn('renderEnterprises()', source)
+
     def test_config_defaults_to_showing_meal_options(self):
         config = server.serialize_config(
             {'admin_username': 'admin', 'google_sheet_name': '活動A'},
