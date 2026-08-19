@@ -386,6 +386,24 @@ def q_event():
     return event_args()
 
 
+def validate_admin_event_session(requested_admin, sheet):
+    admin = clean_text(session.get('username'))
+    if not session.get('admin_logged_in') or not admin:
+        return None, (jsonify(success=False, message='請先登入管理員後台'), 401)
+    if requested_admin != admin:
+        return None, (jsonify(success=False, message='你沒有權限讀取這個管理員的資料'), 403)
+    allowed = session.get('allowed_sheets') or []
+    if isinstance(allowed, str):
+        allowed = [value.strip() for value in allowed.split(',') if value.strip()]
+    current = clean_text(session.get('current_admin_sheet'))
+    allowed = {clean_text(value) for value in allowed if clean_text(value)}
+    if current:
+        allowed.add(current)
+    if sheet not in allowed:
+        return None, (jsonify(success=False, message='你沒有權限讀取這個場次'), 403)
+    return admin, None
+
+
 def json_loads(value, default=None):
     if default is None:
         default = []
@@ -924,15 +942,27 @@ def public_user(row):
     portrait_time = utc_db_datetime_to_taipei(r.get('portrait_consent_time'))
     portrait_status = portrait_status_from_row(r)
     original_name = clean_text(r.get('name'))
+    original_phone = clean_text(r.get('phone'))
+    original_email = clean_text(r.get('email'))
     proxy_name = clean_text(r.get('proxy_name'))
+    proxy_phone = clean_text(r.get('proxy_phone'))
+    proxy_email = clean_text(r.get('proxy_email'))
     is_proxy = str(r.get('status') or '').lower() == '替代' or r.get('is_original') in (0, False, '0')
     attendance_name = proxy_name if is_proxy and proxy_name else original_name
+    attendance_phone = proxy_phone if is_proxy and proxy_name else original_phone
+    attendance_email = proxy_email if is_proxy and proxy_name else original_email
     meal_preference = normalize_meal_preference(r.get('meal_preference'))
     result = {
         **r,
         'original_name': original_name,
+        'original_phone': original_phone,
+        'original_email': original_email,
         'proxy_name': proxy_name,
+        'proxy_phone': proxy_phone,
+        'proxy_email': proxy_email,
         'attendance_name': attendance_name,
+        'attendance_phone': attendance_phone,
+        'attendance_email': attendance_email,
         'display_name': attendance_name,
         'is_proxy': bool(is_proxy and proxy_name),
         'company': company,
@@ -2011,7 +2041,10 @@ def delete_sheet_data_api():
 
 @app.route('/api/sheets/export_csv', methods=['GET'])
 def export_csv_api():
-    admin, sheet = q_event()
+    requested_admin, sheet = q_event()
+    admin, access_error = validate_admin_event_session(requested_admin, sheet)
+    if access_error:
+        return access_error
     conn = None
     try:
         conn = get_db_connection()
@@ -2110,8 +2143,16 @@ def aggregate_checked_in_companies(rows):
 
 
 @app.route('/api/dashboard_stats')
+@app.route('/api/admin/dashboard_stats')
 def dashboard_stats():
-    admin, sheet = q_event()
+    requested_admin, sheet = q_event()
+    include_private = request.path.startswith('/api/admin/')
+    if include_private:
+        admin, access_error = validate_admin_event_session(requested_admin, sheet)
+        if access_error:
+            return access_error
+    else:
+        admin = requested_admin
     conn = None
     try:
         conn = get_db_connection()
@@ -2187,6 +2228,11 @@ def dashboard_stats():
         mappings = load_industry_mappings(conn, admin, sheet)
         checked_rows = [row for row in roster_rows if status_checked(row.get('status'))]
         checked_in_companies = aggregate_checked_in_companies(roster_rows)
+        if not include_private:
+            checked_in_companies = [
+                {key: value for key, value in company.items() if key != 'attendees'}
+                for company in checked_in_companies
+            ]
         industry_stats = {
             'all': aggregate_registration_field(
                 roster_rows, lambda row: resolve_registration_industry(row, mappings)
@@ -2203,7 +2249,7 @@ def dashboard_stats():
                 checked_rows, lambda row: normalize_meal_preference(row.get('meal_preference'))
             ),
         }
-        logs = get_logs(conn, admin, sheet, 25, checked_only=True)
+        logs = get_logs(conn, admin, sheet, 25, checked_only=True) if include_private else []
         return jsonify(success=True, stats={
             'total': total,
             'checked_in': checked,
@@ -2213,7 +2259,7 @@ def dashboard_stats():
             'meal_stats': meal_stats,
             'checked_in_companies': checked_in_companies,
             'table_stats': table_stats,
-            'table_details': table_details,
+            'table_details': table_details if include_private else [],
         })
     except Exception as e:
         return jsonify(success=False, message=str(e), stats={}), 500

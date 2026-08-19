@@ -213,6 +213,11 @@ class TimezoneTests(unittest.TestCase):
             'checked_in_at': datetime(2026, 8, 19, 3, 18, 48),
         })
         fixed_taipei = datetime(2026, 8, 19, 11, 30, 0, tzinfo=server.TAIPEI_TZ)
+        with self.client.session_transaction() as user_session:
+            user_session['admin_logged_in'] = True
+            user_session['username'] = 'admin'
+            user_session['allowed_sheets'] = ['活動A']
+            user_session['current_admin_sheet'] = '活動A'
         with (
             patch.object(server, 'get_db_connection', return_value=connection),
             patch.object(server, 'ensure_core_tables'),

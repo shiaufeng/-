@@ -632,13 +632,18 @@ class CsvImportTests(unittest.TestCase):
 
     def test_proxy_public_user_keeps_original_and_exposes_attendance_name(self):
         user = server.public_user({
-            'name': '原主管', 'proxy_name': '替代主管', 'proxy_phone': '0900111222',
+            'name': '原主管', 'phone': '0911000000', 'email': 'original@example.com',
+            'proxy_name': '替代主管', 'proxy_phone': '0900111222',
             'status': '替代', 'is_original': 0, 'seat': '第3桌', 'meal_preference': '素食',
         })
         self.assertEqual(user['name'], '原主管')
         self.assertEqual(user['original_name'], '原主管')
         self.assertEqual(user['display_name'], '替代主管')
         self.assertEqual(user['attendance_name'], '替代主管')
+        self.assertEqual(user['original_phone'], '0911000000')
+        self.assertEqual(user['original_email'], 'original@example.com')
+        self.assertEqual(user['attendance_phone'], '0900111222')
+        self.assertEqual(user['attendance_email'], '')
         self.assertTrue(user['is_proxy'])
 
     def test_checked_in_companies_only_include_checked_status_and_merge_duplicates(self):

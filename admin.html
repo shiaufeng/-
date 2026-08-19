@@ -178,8 +178,8 @@
      </div>
      <div class="table-wrap" style="margin-top:.8rem">
       <table>
-       <thead><tr><th>時間（台灣）</th><th>姓名</th><th>公司艦隊</th><th>肖像權</th></tr></thead>
-       <tbody id="logs-body"><tr><td colspan="4">載入中...</td></tr></tbody>
+       <thead><tr><th>時間（台灣）</th><th>實際出席姓名</th><th>聯絡資料</th><th>公司艦隊</th><th>肖像權</th></tr></thead>
+       <tbody id="logs-body"><tr><td colspan="5">載入中...</td></tr></tbody>
       </table>
      </div>
     </div>
@@ -261,7 +261,7 @@
       <div class="msg" id="csvPreviewSummary"></div>
       <div class="table-wrap" style="margin-top:.8rem">
        <table>
-         <thead><tr><th>姓名</th><th>手機</th><th>公司</th><th>職稱</th><th>產業類別</th><th>葷素</th><th>桌號</th><th>備註</th></tr></thead>
+         <thead><tr><th>姓名</th><th>手機</th><th>E-mail</th><th>公司</th><th>職稱</th><th>產業類別</th><th>葷素</th><th>桌號</th><th>備註</th></tr></thead>
         <tbody id="csvPreviewBody"></tbody>
        </table>
       </div>
@@ -322,13 +322,13 @@
      <div>
       <h3 style="color:#86efac;margin-bottom:.5rem">✅ 已報到</h3>
       <div class="table-detail-list">
-       <table><thead><tr><th>姓名</th><th>公司</th><th>職稱</th><th>手機</th><th>葷素</th><th>狀態</th></tr></thead><tbody id="tableCheckedBody"></tbody></table>
+       <table><thead><tr><th>實際出席姓名</th><th>公司</th><th>職稱</th><th>聯絡資料</th><th>葷素</th><th>狀態</th></tr></thead><tbody id="tableCheckedBody"></tbody></table>
       </div>
      </div>
      <div>
       <h3 style="color:#fcd34d;margin-bottom:.5rem">⏳ 未報到</h3>
       <div class="table-detail-list">
-       <table><thead><tr><th>姓名</th><th>公司</th><th>職稱</th><th>手機</th><th>葷素</th><th>狀態</th></tr></thead><tbody id="tablePendingBody"></tbody></table>
+       <table><thead><tr><th>實際出席姓名</th><th>公司</th><th>職稱</th><th>聯絡資料</th><th>葷素</th><th>狀態</th></tr></thead><tbody id="tablePendingBody"></tbody></table>
       </div>
      </div>
     </div>
@@ -353,9 +353,10 @@
   
   <div class="modal" id="addModal">
    <div class="modal-box">
-    <div class="panel-title">➕ 臨時額外報到</div>
-    <div class="form-row"><label>旅客姓名</label><input class="input" id="addName"/></div>
-    <div class="form-row"><label>手機號碼</label><input class="input" id="addPhone"/></div>
+     <div class="panel-title">➕ 臨時額外報到</div>
+     <div class="form-row"><label>旅客姓名</label><input class="input" id="addName"/></div>
+     <div class="form-row"><label>手機號碼</label><input class="input" id="addPhone"/></div>
+     <div class="form-row"><label>E-mail（選填）</label><input class="input" id="addEmail" type="email"/></div>
     <div class="form-row"><label>公司/單位</label><input class="input" id="addCompany"/></div>
     <div class="form-row"><label>職稱</label><input class="input" id="addTitle"/></div>
     <div class="form-row"><label>產業類別（選填）</label><input class="input" id="addIndustry" placeholder="例如：資訊科技"/></div>
@@ -411,7 +412,13 @@
    function enc(v) { return encodeURIComponent(v||''); }
    function qs() { return `?admin=${enc(currentAdmin)}&sheet=${enc(currentSheet)}`; }
    function esc(v) { return String(v??'').replace(/[&<>'"]/g, m=>({'&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;'}[m])); }
-   async function get(url) { const r=await fetch(url); return await r.json(); }
+    async function get(url) {
+      const r=await fetch(url);
+      const data=await r.json();
+      if(r.status===401){location.href='/login.html';throw new Error(data.message||'登入已失效');}
+      if(!r.ok)throw new Error(data.message||`讀取失敗（${r.status}）`);
+      return data;
+    }
    async function send(url, method, data) {
      const r=await fetch(url, { method, headers: { 'Content-Type':'application/json' }, body:JSON.stringify(data|| {}) });
      return await r.json();
@@ -526,7 +533,7 @@
    }
 
    async function updateDashboard(){
-     const d=await get(`${API_BASE}/dashboard_stats${qs()}&t=${Date.now()}`);
+     const d=await get(`${API_BASE}/admin/dashboard_stats${qs()}&t=${Date.now()}`);
      if(!d.success)throw new Error(d.message||'戰情儀表板載入失敗');
      const s=d.stats||{};
       setText('stat-total',s.total||0);
@@ -568,10 +575,28 @@
        const [t,c]=portraitLabel(x);
        const actual=x.display_name||x.attendance_name||x.proxy_name||x.name||'';
        const original=x.original_name||x.name||'';
-       const nameLabel=x.is_proxy||x.proxy_name ? `${actual}<div class="muted">代替 ${esc(original)}</div>` : esc(actual);
+       const nameLabel=x.is_proxy||x.proxy_name ? `${esc(actual)}<div class="muted">代替 ${esc(original)}</div>` : esc(actual);
        const checkedTime=x.checked_in_at||x.checkin_time||x.checkedInAt||'';
-       return `<tr><td>${esc(checkedTime)}</td><td>${nameLabel}</td><td>${esc(x.company||x.company_name||'')}</td><td class="${c}">${t}</td></tr>`;
-     }).join('')||'<tr><td colspan="4" class="muted">尚無報到紀錄</td></tr>';
+       return `<tr><td>${esc(checkedTime)}</td><td>${nameLabel}</td><td>${contactHtml(x)}</td><td>${esc(x.company||x.company_name||'')}</td><td class="${c}">${t}</td></tr>`;
+     }).join('')||'<tr><td colspan="5" class="muted">尚無報到紀錄</td></tr>';
+   }
+
+   function contactHtml(x){
+     const isProxy=Boolean(x?.is_proxy||x?.proxy_name);
+     const phone=String(x?.attendance_phone||'').trim();
+     const email=String(x?.attendance_email||'').trim();
+     const lines=[
+       `<div>手機：${phone?esc(phone):'<span class="muted">未提供</span>'}</div>`,
+       `<div>E-mail：${email?esc(email):'<span class="muted">未提供</span>'}</div>`
+     ];
+     if(isProxy){
+       const originalPhone=String(x?.original_phone||x?.phone||'').trim();
+       const originalEmail=String(x?.original_email||x?.email||'').trim();
+       if(originalPhone||originalEmail){
+         lines.push(`<div class="muted">原報名聯絡：${esc([originalPhone,originalEmail].filter(Boolean).join('／'))}</div>`);
+       }
+     }
+     return lines.join('');
    }
 
    function zhNum(n){
@@ -608,7 +633,7 @@
      const original=x.original_name||x.name||'';
      const name=x.is_proxy||x.proxy_name ? `${esc(actual)}<div class="muted">代替 ${esc(original)}</div>` : esc(actual);
      const meal=esc(x.meal_preference||x.meal||'不用餐');
-     return `<tr><td>${name}</td><td>${esc(x.company||x.company_name||'-')}</td><td>${esc(x.job_title||'-')}</td><td>${esc(x.phone||'-')}</td><td>${meal}</td><td><span class="status-dot ${checked?'status-ok':'status-wait'}">${checked?'已報到':'未報到'}</span></td></tr>`;
+     return `<tr><td>${name}</td><td>${esc(x.company||x.company_name||'-')}</td><td>${esc(x.job_title||'-')}</td><td>${contactHtml(x)}</td><td>${meal}</td><td><span class="status-dot ${checked?'status-ok':'status-wait'}">${checked?'已報到':'未報到'}</span></td></tr>`;
    }
 
    function openTableDetails(encodedKey){
@@ -690,9 +715,9 @@
        `目前舊名單：${esc(oldCount)}。確認後會整批覆寫，既有報到狀態與報到時間將被清除。`;
      const rows=Array.isArray(data.rows)?data.rows:[];
       document.getElementById('csvPreviewBody').innerHTML=rows.map(row=>`<tr>
-        <td>${esc(row.name)}</td><td>${esc(row.phone)}</td><td>${esc(row.company)}</td>
+        <td>${esc(row.name)}</td><td>${esc(row.phone)}</td><td>${esc(row.email)}</td><td>${esc(row.company)}</td>
         <td>${esc(row.job_title)}</td><td>${esc(row.industry_category||'未分類')}</td><td>${esc(row.meal_preference||'不用餐')}</td><td>${esc(row.seat)}</td><td>${esc(row.special_notes)}</td>
-      </tr>`).join('')||'<tr><td colspan="8" class="muted">沒有可預覽資料</td></tr>';
+      </tr>`).join('')||'<tr><td colspan="9" class="muted">沒有可預覽資料</td></tr>';
      document.getElementById('csvPreviewPanel').style.display='block';
    }
 
@@ -871,7 +896,7 @@
 
    async function submitAddRegistration() {
      const portrait=document.getElementById('addPortrait').checked;
-      const data= { admin:currentAdmin, sheet:currentSheet, name:addName.value.trim(), phone:addPhone.value.trim(), company:addCompany.value.trim(), job_title:addTitle.value.trim(), industry_category:addIndustry.value.trim(), meal_preference:addMeal.value, seat:addSeat.value.trim(), portrait_consent:portrait, portrait_consent_status:portrait?'同意':'不同意' };
+      const data= { admin:currentAdmin, sheet:currentSheet, name:addName.value.trim(), phone:addPhone.value.trim(), email:addEmail.value.trim(), company:addCompany.value.trim(), job_title:addTitle.value.trim(), industry_category:addIndustry.value.trim(), meal_preference:addMeal.value, seat:addSeat.value.trim(), portrait_consent:portrait, portrait_consent_status:portrait?'同意':'不同意' };
       if(!data.name||!data.phone)return alert('請完整填寫姓名與手機');
       if(!data.seat)return alert('桌次請由工作人員填寫；尚未安排時請填「待分桌」');
      const d=await send(`${API_BASE}/registrations/add`, 'POST', data);
