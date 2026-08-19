@@ -7,7 +7,7 @@ import hashlib
 import hmac
 import secrets
 import zipfile
-from datetime import date as date_type, datetime, time as time_type
+from datetime import date as date_type, datetime, time as time_type, timedelta, timezone
 from urllib.parse import urlparse, quote, unquote
 
 from flask import Flask, request, jsonify, session, send_from_directory, Response
@@ -32,6 +32,26 @@ DEFAULT_PASSWORD = ADMIN_PASSWORD or 'admin123'
 ROTATE_DEFAULT_ADMIN_PASSWORD = IS_RENDER and bool(ADMIN_PASSWORD)
 DEFAULT_SHEET = os.getenv('ADMIN_DEFAULT_EVENT') or os.getenv('ADMIN_DEFAULT_EVENTS') or '活動報到名單'
 CHECKED_STATUSES = ('checked_in', '已報到', '替代', 'done')
+UTC_TZ = timezone.utc
+TAIPEI_TZ = timezone(timedelta(hours=8), name='Asia/Taipei')
+
+
+def utc_now_naive():
+    """Return a timezone-free UTC value for MySQL DATETIME columns."""
+    return datetime.now(UTC_TZ).replace(tzinfo=None)
+
+
+def taipei_now():
+    return datetime.now(TAIPEI_TZ)
+
+
+def utc_db_datetime_to_taipei(value):
+    """Interpret existing naive Render/MySQL values as UTC for display."""
+    if not isinstance(value, datetime):
+        return value
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC_TZ)
+    return value.astimezone(TAIPEI_TZ)
 
 # ============================================================
 # DB helpers
@@ -50,6 +70,7 @@ def db_params():
             charset='utf8mb4',
             cursorclass=DictCursor,
             autocommit=False,
+            init_command="SET time_zone = '+00:00'",
         )
     return dict(
         host=os.getenv('MYSQLHOST') or os.getenv('DB_HOST') or 'localhost',
@@ -60,6 +81,7 @@ def db_params():
         charset='utf8mb4',
         cursorclass=DictCursor,
         autocommit=False,
+        init_command="SET time_zone = '+00:00'",
     )
 
 
@@ -898,7 +920,8 @@ def public_user(row):
     r = dict(row or {})
     company = r.get('company') or r.get('company_name') or ''
     seat = r.get('seat') or r.get('seating_chart') or ''
-    checked_time = r.get('checked_in_at') or r.get('checkin_time')
+    checked_time = utc_db_datetime_to_taipei(r.get('checked_in_at') or r.get('checkin_time'))
+    portrait_time = utc_db_datetime_to_taipei(r.get('portrait_consent_time'))
     portrait_status = portrait_status_from_row(r)
     original_name = clean_text(r.get('name'))
     proxy_name = clean_text(r.get('proxy_name'))
@@ -927,6 +950,9 @@ def public_user(row):
         'checked_in_at': checked_time.strftime('%Y-%m-%d %H:%M:%S') if hasattr(checked_time, 'strftime') else (checked_time or ''),
         'checkin_time': checked_time.strftime('%Y-%m-%d %H:%M:%S') if hasattr(checked_time, 'strftime') else (checked_time or ''),
         'checkedInAt': checked_time.strftime('%H:%M:%S') if hasattr(checked_time, 'strftime') else (checked_time or ''),
+        'checked_in_at_iso': checked_time.isoformat(timespec='seconds') if isinstance(checked_time, datetime) else '',
+        'portrait_consent_time': portrait_time.strftime('%Y-%m-%d %H:%M:%S') if hasattr(portrait_time, 'strftime') else (portrait_time or ''),
+        'portrait_consent_time_iso': portrait_time.isoformat(timespec='seconds') if isinstance(portrait_time, datetime) else '',
         'special_notes': r.get('special_notes') or r.get('note') or '',
         'note': r.get('special_notes') or r.get('note') or '',
     }
@@ -1187,7 +1213,14 @@ def static_files(path):
 # ============================================================
 @app.route('/api/health')
 def health():
-    return jsonify(success=True, status='ok', time=datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+    now = taipei_now()
+    return jsonify(
+        success=True,
+        status='ok',
+        time=now.strftime('%Y-%m-%d %H:%M:%S'),
+        time_iso=now.isoformat(timespec='seconds'),
+        timezone='Asia/Taipei',
+    )
 
 @app.route('/api/login', methods=['POST'])
 def api_login():
@@ -1581,7 +1614,7 @@ def api_registration_add():
         sheet = clean_text(data.get('sheet') or data.get('google_sheet_name')) or session.get('current_admin_sheet') or DEFAULT_SHEET
         portrait_bool = bool(data.get('portrait_consent'))
         portrait_status = clean_text(data.get('portrait_consent_status')) or ('同意' if portrait_bool else '不同意')
-        now = datetime.now()
+        now = utc_now_naive()
         conn = get_db_connection()
         ensure_core_tables(conn)
         ensure_config(conn, admin, sheet)
@@ -1640,7 +1673,7 @@ def api_checkin(rid):
         portrait_bool = bool(data.get('portrait_consent'))
         portrait_status = clean_text(data.get('portrait_consent_status') or data.get('image_rights_status')) or ('同意' if portrait_bool else '不同意')
         status = 'checked_in' if is_original else '替代'
-        now = datetime.now()
+        now = utc_now_naive()
         conn = get_db_connection()
         ensure_core_tables(conn)
         ensure_config(conn, admin, sheet)
@@ -1992,7 +2025,7 @@ def export_csv_api():
                 """,
                 (admin, sheet),
             )
-            rows = [public_user(r) for r in cur.fetchall()]
+            rows = cur.fetchall()
         output = io.StringIO()
         writer = csv.writer(output)
         writer.writerow(['原名單姓名', '實際出席姓名', '手機', '公司/單位', 'Email', '職稱', '產業類別', '葷素', '桌號/座位', '報到狀態', '報到時間', '肖像權狀態', '替代人姓名', '替代人手機', '備註'])
@@ -2001,7 +2034,7 @@ def export_csv_api():
             writer.writerow([
                 r.get('name', ''), user.get('attendance_name', ''), r.get('phone', ''), r.get('company', ''), r.get('email', ''), r.get('job_title', ''),
                 r.get('industry_category', ''), normalize_meal_preference(r.get('meal_preference')), r.get('seat', ''),
-                r.get('status', ''), r.get('checkin_time', ''), r.get('portrait_consent_status', ''),
+                r.get('status', ''), user.get('checkin_time', ''), r.get('portrait_consent_status', ''),
                 r.get('proxy_name', ''), r.get('proxy_phone', ''), r.get('special_notes', ''),
             ])
         data = output.getvalue().encode('utf-8-sig')
@@ -2009,7 +2042,7 @@ def export_csv_api():
         return Response(
             data,
             content_type='text/csv; charset=utf-8',
-            headers={'Content-Disposition': f"attachment; filename*=UTF-8''{quote(filename)}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"},
+            headers={'Content-Disposition': f"attachment; filename*=UTF-8''{quote(filename)}_{taipei_now().strftime('%Y%m%d_%H%M%S')}.csv"},
         )
     except Exception as e:
         return jsonify(success=False, message=str(e)), 500

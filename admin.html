@@ -178,7 +178,7 @@
      </div>
      <div class="table-wrap" style="margin-top:.8rem">
       <table>
-       <thead><tr><th>時間</th><th>姓名</th><th>公司艦隊</th><th>肖像權</th></tr></thead>
+       <thead><tr><th>時間（台灣）</th><th>姓名</th><th>公司艦隊</th><th>肖像權</th></tr></thead>
        <tbody id="logs-body"><tr><td colspan="4">載入中...</td></tr></tbody>
       </table>
      </div>
@@ -569,7 +569,8 @@
        const actual=x.display_name||x.attendance_name||x.proxy_name||x.name||'';
        const original=x.original_name||x.name||'';
        const nameLabel=x.is_proxy||x.proxy_name ? `${actual}<div class="muted">代替 ${esc(original)}</div>` : esc(actual);
-       return `<tr><td>${esc(x.checkedInAt||x.checked_in_at||'')}</td><td>${nameLabel}</td><td>${esc(x.company||x.company_name||'')}</td><td class="${c}">${t}</td></tr>`;
+       const checkedTime=x.checked_in_at||x.checkin_time||x.checkedInAt||'';
+       return `<tr><td>${esc(checkedTime)}</td><td>${nameLabel}</td><td>${esc(x.company||x.company_name||'')}</td><td class="${c}">${t}</td></tr>`;
      }).join('')||'<tr><td colspan="4" class="muted">尚無報到紀錄</td></tr>';
    }
 
